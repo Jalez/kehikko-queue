@@ -1,16 +1,9 @@
 #!/usr/bin/env bash
 #
-# What a host runs to start this module: no arguments, foreground, `exec`.
-#
-#   - No arguments, because a registration names a directory and this script,
-#     never a command line a host would hand to a shell.
-#   - No port here. It is PREFERRED_PORT in manifest.ts, and `serves()` in
-#     vite.config.ts acts on it: takes it when free, honours $PORT from a host,
-#     and moves (rewriting the registration) when something else has it.
-#   - `exec` in the foreground, so the pid a host holds is the one that stops it.
-#
-# A first start registers this folder with Kehikot on this computer when
-# nothing else is registered under the id (`serves()`); `bun run stub` never does.
+# What a host runs to start this module: no arguments, foreground, `exec`. No port here: it is
+# PREFERRED_PORT in manifest.ts, and `serves()` / `run()` act on it and honour $PORT from a host.
+# The built page (`bun run build`, which a host runs at install and update) when its stamp is this
+# checkout's commit; Vite otherwise. A stale build is never served.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -33,6 +26,22 @@ if [ ! -d node_modules ] || [ ! -f "$INSTALLED" ] || [ bun.lock -nt "$INSTALLED"
   touch "$INSTALLED"
   # Rebuild Vite's pre-bundle rather than trust one made from the old packages.
   VITE_FORCE=--force
+fi
+
+# The built page, when its stamp is this checkout's HEAD (`bun run build`, which a
+# host runs at install and update, never at start). Read here, in the shell, so
+# choosing costs a `git rev-parse` and not a process. A checkout somebody edits
+# has no stamp, or one of an older commit, and gets Vite; a stale build is never
+# served (`serve.ts` refuses one too, with a 503 that says why).
+BUILT=
+if [ -f dist/.kehikot-built ] && [ -f dist/index.html ]; then
+  read -r BUILT < dist/.kehikot-built || true
+fi
+if [ -n "$BUILT" ] && [ "$BUILT" = "$(git rev-parse HEAD 2>/dev/null)" ]; then
+  exec bun run serve.ts
+fi
+if [ -n "$BUILT" ]; then
+  echo "queue: dist/ is a build of ${BUILT:0:7}, not of this checkout, so Vite serves the page. \`bun run build\` would make it current." >&2
 fi
 
 exec bunx vite $VITE_FORCE

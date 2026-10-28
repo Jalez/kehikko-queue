@@ -1,0 +1,5 @@
+#!/bin/sh
+# kehikot-queue: see kehikot-queue.ts beside this file. Link THIS file onto your PATH; it follows the
+# link back to its own folder. Needs bun.
+here=$(dirname "$(realpath "$0")")
+exec bun "$here/kehikot-queue.ts" "$@"

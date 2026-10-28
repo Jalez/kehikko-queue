@@ -3,13 +3,13 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "kehikko-example",
+      "name": "kehikko-queue",
       "dependencies": {
         "@radix-ui/react-dropdown-menu": "^2.1.24",
         "@radix-ui/react-slot": "^1.3.3",
         "class-variance-authority": "^0.7.1",
         "clsx": "^2.1.1",
-        "kehikot-module-protocol": "git+https://github.com/Jalez/kehikko-protocol.git#v2.10.0",
+        "kehikot-module-protocol": "git+https://github.com/Jalez/kehikko-protocol.git#v2.27.0",
         "lucide-react": "^1.33.0",
         "react": "^19.2.8",
         "react-dom": "^19.2.8",
@@ -375,7 +375,7 @@
 
     "json5": ["json5@2.2.3", "", { "bin": { "json5": "lib/cli.js" } }, "sha512-XmOWe7eyHYH14cLdVPoyg+GOH3rYX++KpzrylJwSW98t3Nk+U8XOl8FWKOgwtzdb8lXGf6zYwDUzeHMWfxasyg=="],
 
-    "kehikot-module-protocol": ["kehikot-module-protocol@github:Jalez/kehikko-protocol#4640e47", { "peerDependencies": { "react": "^18.0.0 || ^19.0.0", "zod": "^3.23.8" }, "optionalPeers": ["react"], "bin": { "kehikot-create": "./bin/create.ts", "kehikot-check-parts": "./bin/check-parts.ts", "kehikot-check-door": "./bin/check-door.ts" } }, "Jalez-kehikko-protocol-4640e47", "sha512-nSExVmEWoJzQVIM0A9hAC96D9tL1wb0qTC3dzL6lSGgwBQdkJGeFbpTT4q1X8pUvCbRF4RJKwJP4xmZLKQiIKg=="],
+    "kehikot-module-protocol": ["kehikot-module-protocol@github:Jalez/kehikko-protocol#e2c7bdc", { "peerDependencies": { "react": "^18.0.0 || ^19.0.0", "zod": "^3.23.8" }, "optionalPeers": ["react"], "bin": { "kehikot-create": "./bin/create.ts", "kehikot-check-parts": "./bin/check-parts.ts", "kehikot-check-door": "./bin/check-door.ts" } }, "Jalez-kehikko-protocol-e2c7bdc", "sha512-DiwDa127xuHGv2aL+PfRLbJd+onBPp76+XAv9aa9w3Py3xjRuxgMSaAxF2JdWGXRPL8r8SYwd+a34s2FjhhL9Q=="],
 
     "lightningcss": ["lightningcss@1.32.0", "", { "dependencies": { "detect-libc": "^2.0.3" }, "optionalDependencies": { "lightningcss-android-arm64": "1.32.0", "lightningcss-darwin-arm64": "1.32.0", "lightningcss-darwin-x64": "1.32.0", "lightningcss-freebsd-x64": "1.32.0", "lightningcss-linux-arm-gnueabihf": "1.32.0", "lightningcss-linux-arm64-gnu": "1.32.0", "lightningcss-linux-arm64-musl": "1.32.0", "lightningcss-linux-x64-gnu": "1.32.0", "lightningcss-linux-x64-musl": "1.32.0", "lightningcss-win32-arm64-msvc": "1.32.0", "lightningcss-win32-x64-msvc": "1.32.0" } }, "sha512-NXYBzinNrblfraPGyrbPoD19C1h9lfI/1mzgWYvXUTe414Gz/X1FD2XBZSZM7rRTrMA8JL3OtAaGifrIKhQ5yQ=="],
 

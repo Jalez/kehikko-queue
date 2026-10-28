@@ -1,96 +1,110 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-
-import type { EpicPart } from 'kehikot-module-protocol'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 
 import { Screen } from '../src/app.tsx'
-import type { Api } from '../src/wire/api.ts'
+import type { Api, Overview } from '../src/wire/api.ts'
 import type { Host } from '../src/wire/use-kehikot.ts'
-import type { Edit, Note } from '../store.ts'
+import { aRun } from './inbox.test.ts'
 
 afterEach(cleanup)
 
-const parts: EpicPart[] = [
-  { id: 'design', heading: 'Design', refs: [], picked: false },
-  { id: 'build', heading: 'Build', refs: [], picked: false },
-]
+const host = (over: Partial<Host> = {}): Host => ({
+  where: 'hosted',
+  project: 'p',
+  projectPath: '/p',
+  epic: 'queue',
+  parts: [],
+  theme: 'light',
+  header: () => {},
+  activity: () => {},
+  picked: [],
+  ...over,
+})
 
-function host(over: Partial<Host> = {}): Host {
-  return {
-    where: 'hosted',
-    project: 'Thesis',
-    projectPath: '/work/thesis',
-    epic: 'launch',
-    parts,
-    picked: [],
-    theme: 'light',
-    header: () => {},
-    activity: () => {},
-    ...over,
+const machine = { cores: 12, load: 3.2, most: 2, loadAbove: 9, waitMinutes: 10 }
+
+function fakeApi(runs: Overview['runs']) {
+  const said: string[] = []
+  const api: Api = {
+    runs: async () => ({ runs, machine }),
+    output: async (id) => ({ text: `output of ${id}\n<b>not markup</b>`, next: 10, size: 10 }),
+    cancel: async (id) => {
+      said.push(`cancel ${id}`)
+      return { runs, machine }
+    },
+    move: async (id, to) => {
+      said.push(`move ${id} ${to}`)
+      return { runs, machine }
+    },
   }
+  return { api, said }
 }
 
-const note = (id: string, text: string, notePart: string[] = [], done = false): Note => ({ id, text, epic: 'launch', parts: notePart, done, at: '2026-10-01T10:00:00Z' })
+const settle = () => act(async () => {
+  await new Promise((done) => setTimeout(done, 20))
+})
 
-function fakeApi(notes: Note[], edits: Edit[] = []): Api {
-  return { read: () => Promise.resolve(notes), edit: (_, one) => (edits.push(one), Promise.resolve(notes)) }
-}
-
-describe('the screen', () => {
-  test('says where the host put it: project, epic, and "the whole epic" when no part is picked', async () => {
-    render(<Screen host={host()} api={fakeApi([])} />)
-    expect(screen.getByTestId('project').textContent).toBe('Thesis')
-    expect(screen.getByTestId('epic').textContent).toBe('launch')
-    expect(screen.getByTestId('parts').textContent).toBe('the whole epic')
-    await waitFor(() => screen.getByText('No open notes.'))
+describe('the Test runs page', () => {
+  test('lists waiting, running and finished runs with where each came from; a failed run shows its output', async () => {
+    const runs = [
+      aRun({ id: 'w1', state: 'queued', startedAt: null, finishedAt: null, exit: null, waiting: 'Next: waiting for one of the 2 running to finish (2 at once).', position: 1 }),
+      aRun({ id: 'u1', state: 'running', finishedAt: null, exit: null, label: 'unit' }),
+      aRun({ id: 'f1', state: 'failed', label: '<script>x</script>' }),
+      aRun({ id: 'p1', state: 'passed', exit: 0, label: 'lint' }),
+    ]
+    const { api } = fakeApi(runs)
+    render(<Screen host={host()} api={api} now={() => 5000} />)
+    await settle()
+    expect(screen.getByRole('region', { name: 'Waiting' }).textContent).toContain('Next: waiting for one of the 2 running')
+    expect(screen.getByRole('region', { name: 'Running' }).textContent).toContain('unit')
+    const finished = screen.getByRole('region', { name: 'Finished' })
+    expect(finished.textContent).toContain('Failed (exit 3)')
+    expect(finished.textContent).toContain('Passed')
+    expect(finished.textContent).toContain('From pre-push hook, in /p · epic queue · for !3907')
+    /* The label is text, never markup. */
+    expect(document.querySelector('script')).toBeNull()
+    expect(finished.textContent).toContain('<script>x</script>')
+    /* The failed run's output is open; the passed one's is not until asked. */
+    const outputs = screen.getAllByTestId('output')
+    expect(outputs).toHaveLength(1)
+    expect(outputs[0]!.textContent).toContain('output of f1')
+    expect(outputs[0]!.querySelector('b')).toBeNull()
+    expect(screen.getByTestId('machine').textContent).toContain('12 cores · load 3.2 · at most 2 at once')
   })
 
-  test('narrows to the picked parts, and says so when the pick leaves nothing', async () => {
-    const picked = parts.map((one) => ({ ...one, picked: one.id === 'build' }))
-    render(<Screen host={host({ parts: picked, picked: ['Build'] })} api={fakeApi([note('a', 'In design', ['design']), note('b', 'Everywhere')])} />)
-    await waitFor(() => screen.getByText('Everywhere'))
-    expect(screen.queryByText('In design')).toBeNull()
-    cleanup()
-    render(<Screen host={host({ parts: picked, picked: ['Build'] })} api={fakeApi([note('a', 'In design', ['design'])])} />)
-    await waitFor(() => screen.getByText('No note is in the picked part.'))
+  test('the person cancels and reorders', async () => {
+    const runs = [
+      aRun({ id: 'w1', label: 'first', state: 'queued', startedAt: null, finishedAt: null, exit: null, position: 1 }),
+      aRun({ id: 'w2', label: 'second', state: 'queued', startedAt: null, finishedAt: null, exit: null, position: 2 }),
+    ]
+    const { api, said } = fakeApi(runs)
+    render(<Screen host={host()} api={api} now={() => 5000} />)
+    await settle()
+    expect((screen.getByRole('button', { name: 'Move “first” up' }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: 'Move “second” to the top' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel “first”' }))
+    await settle()
+    expect(said).toEqual(['move w2 top', 'cancel w1'])
   })
 
-  test('a note is drawn as text, never as markup', async () => {
-    render(<Screen host={host()} api={fakeApi([note('a', '<b>bold</b>')])} />)
-    await waitFor(() => screen.getByText('<b>bold</b>'))
+  test('this project only, or every project', async () => {
+    const runs = [aRun({ id: 'a', label: 'mine' }), aRun({ id: 'b', label: 'theirs', project: '/other' })]
+    const { api } = fakeApi(runs)
+    const here = render(<Screen host={host()} api={api} showing="here" now={() => 5000} />)
+    await settle()
+    expect(here.container.textContent).toContain('mine')
+    expect(here.container.textContent).not.toContain('theirs')
+    here.unmount()
+    const all = render(<Screen host={host()} api={api} showing="all" now={() => 5000} />)
+    await settle()
+    expect(all.container.textContent).toContain('theirs')
   })
 
-  test('a new note is filed under the parts picked when it was written', async () => {
-    const edits: Edit[] = []
-    const picked = parts.map((one) => ({ ...one, picked: one.id === 'design' }))
-    render(<Screen host={host({ parts: picked, picked: ['Design'] })} api={fakeApi([], edits)} />)
-    await waitFor(() => screen.getByLabelText('A new note'))
-    fireEvent.change(screen.getByLabelText('A new note'), { target: { value: 'Pick a colour' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
-    await waitFor(() => expect(edits).toEqual([{ op: 'add', text: 'Pick a colour', epic: 'launch', parts: ['design'] }]))
-  })
-
-  test('the open notes are reported to the Inbox, whole', async () => {
-    const reported: unknown[][] = []
-    render(<Screen host={host({ activity: (items) => reported.push(items) })} api={fakeApi([note('a', 'Open'), note('b', 'Done', [], true)])} />)
-    await waitFor(() => expect(reported.at(-1)?.length).toBe(1))
-  })
-
-  test('each not-ready moment is the shared cover, with nothing to save into', () => {
-    const none = { projectPath: null, project: null, epic: null }
-    for (const [where, state] of [['listening', 'waiting'], ['unhosted', 'unhosted'], ['hosted', 'no-project']] as const) {
-      const { container } = render(<Screen host={host({ ...none, where })} api={fakeApi([])} />)
-      expect(container.querySelector('[data-cover]')?.getAttribute('data-cover')).toBe(state)
-      expect(screen.queryByRole('button', { name: 'Add' })).toBeNull()
-      cleanup()
-    }
-  })
-
-  test('alone, the page draws its own header; hosted, the host does', () => {
-    render(<Screen host={host({ where: 'unhosted' })} api={fakeApi([])} />)
-    expect(screen.getByRole('button', { name: /View/ })).toBeDefined()
-    cleanup()
-    render(<Screen host={host()} api={fakeApi([])} />)
-    expect(screen.queryByRole('button', { name: /View/ })).toBeNull()
+  test('reports every run of the last day to the Inbox, a failure as needing the person', async () => {
+    const reported: unknown[] = []
+    const { api } = fakeApi([aRun()])
+    render(<Screen host={host({ activity: (items) => reported.push(items) })} api={api} now={() => 5000} />)
+    await settle()
+    expect(reported.at(-1)).toEqual([expect.objectContaining({ id: 'run:r1', state: 'attention' })])
   })
 })
