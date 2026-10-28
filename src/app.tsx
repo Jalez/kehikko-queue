@@ -254,7 +254,7 @@ function RunRow({ run, now, jump, onOutput, children }: { run: RunView; now: num
  * wrapper, because a disabled button takes no pointer.
  */
 function JumpButton({ run, host, partName, onSaid }: { run: RunView; host: Host; partName: (id: string) => string; onSaid: (said: string | null) => void }) {
-  const jump = jumpFor(run, host.projectPath ?? null, partName)
+  const jump = jumpFor(run, { path: host.projectPath ?? null, id: host.projectId ?? null }, partName)
   const go = async (params: GotoParams) => {
     try {
       const got = navigationResult.safeParse(await host.request('view.goto', { ...params }))

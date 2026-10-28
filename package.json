@@ -1,6 +1,6 @@
 {
   "name": "kehikko-queue",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "Test runs, a module a Kehikot host frames: one machine-wide queue for heavy test runs from every session, started when there is room.",
@@ -22,7 +22,7 @@
     "@radix-ui/react-slot": "^1.3.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "kehikot-module-protocol": "git+https://github.com/Jalez/kehikko-protocol.git#v2.27.0",
+    "kehikot-module-protocol": "git+https://github.com/Jalez/kehikko-protocol.git#v2.28.0",
     "lucide-react": "^1.33.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",

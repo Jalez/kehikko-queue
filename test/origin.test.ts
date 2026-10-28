@@ -62,14 +62,14 @@ describe('a run records where it came from', () => {
     ASK.options = { fetch: host(project), keepMs: 0 }
     await run('queue_run', { command: ['true'], label: 'unit', cwd: project }, `kehikot-place=${PLACE}`)
     const [one] = q.list()
-    expect(one!.origin).toEqual({ project, projectName: 'Scratch', epic: 'queue', parts: ['methods'], kehikko: 'k1', kehikkoName: 'Wide', session: 'abcdef123456', branch: 'feature-x' })
+    expect(one!.origin).toEqual({ project, projectId: 'project-scratch-1', projectName: 'Scratch', epic: 'queue', parts: ['methods'], kehikko: 'k1', kehikkoName: 'Wide', session: 'abcdef123456', branch: 'feature-x' })
   })
 
   test('a CLI run inside a project: the project the host names, found from a subfolder, with the branch', async () => {
     ASK.options = { fetch: host(project), keepMs: 0 }
     const answer = await cli({ cwd: join(project, 'packages', 'a') })
     expect(answer?.status).toBe(200)
-    expect(q.list()[0]!.origin).toEqual({ project, projectName: 'proj', epic: null, parts: [], kehikko: null, kehikkoName: null, session: null, branch: 'feature-x' })
+    expect(q.list()[0]!.origin).toEqual({ project, projectId: null, projectName: 'proj', epic: null, parts: [], kehikko: null, kehikkoName: null, session: null, branch: 'feature-x' })
   })
 
   test('a CLI run outside any project: no origin, and nothing else of the caller kept', async () => {
@@ -89,20 +89,28 @@ describe('the jump-into button, from the origin', () => {
 
   test('goes to the epic with the parts and the kehikko, and names them', () => {
     expect(jumpFor(base, '/p', (id) => ({ p1: 'methods', p2: 'results' })[id] ?? id)).toEqual({
-      goto: { epic: 'queue', parts: ['p1', 'p2'], kehikko: 'k1' },
+      goto: { epic: 'queue', parts: ['p1', 'p2'], kehikko: 'k1', show: { subject: 'agent-session', id: 's1' } },
       words: 'Go to Wide · queue · methods, results',
     })
   })
   test('asks for only the epic when nothing more is known', () => {
-    expect(jumpFor({ ...base, origin: { ...origin, parts: [], kehikko: null, kehikkoName: null } }, '/p').goto).toEqual({ epic: 'queue' })
+    expect(jumpFor({ ...base, origin: { ...origin, parts: [], kehikko: null, kehikkoName: null, session: null } }, '/p').goto).toEqual({ epic: 'queue' })
   })
   test('outside any project: disabled, naming the folder', () => {
     expect(jumpFor({ cwd: '/Users/me/scratch/thing/', project: null, epic: null, origin: null }, '/p')).toEqual({ goto: null, words: 'Started outside any Kehikot project: thing' })
   })
-  test('another project, no project open, or no epic: disabled, with the reason', () => {
-    expect(jumpFor(base, '/other').goto).toBeNull()
-    expect(jumpFor(base, '/other').words).toContain('Open that project in Kehikot')
+  test('another project: the host switches to it, named by id when the run kept one, else by folder', () => {
+    expect(jumpFor(base, '/other')).toEqual({
+      goto: { epic: 'queue', parts: ['p1', 'p2'], kehikko: 'k1', project: '/p', show: { subject: 'agent-session', id: 's1' } },
+      words: 'Go to Scratch · Wide · queue · p1, p2 (in another project)',
+    })
+    const withId = { ...base, origin: { ...origin, projectId: 'project-scratch-1' } }
+    expect(jumpFor(withId, { path: '/elsewhere', id: 'project-other-2' }).goto?.project).toBe('project-scratch-1')
+    expect(jumpFor(withId, { path: '/moved/p', id: 'project-scratch-1' }).goto?.project).toBeUndefined()
+  })
+  test('no project open, or no epic: disabled, with the reason', () => {
     expect(jumpFor(base, null).words).toContain('Open Test runs in Kehikot')
+    expect(jumpFor(base, { path: null, id: null }).goto).toBeNull()
     expect(jumpFor({ ...base, origin: { ...origin, epic: null } }, '/p').words).toContain('not in an epic')
   })
   test('a run kept before origins were recorded still goes to its epic', () => {

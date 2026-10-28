@@ -12,6 +12,7 @@ const host = (over: Partial<Host> = {}): Host => ({
   where: 'hosted',
   project: 'p',
   projectPath: '/p',
+  projectId: null,
   epic: 'queue',
   parts: [],
   theme: 'light',
