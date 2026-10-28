@@ -47,7 +47,11 @@ export const DECLARED: Manifest = manifestSchema.parse({
     + 'typecheck or a pre-push run directly: put it in the queue with `queue_run` (command, cwd, kind, label, ref) and wait for its '
     + 'result with `queue_wait` instead of polling the load. A failed run\'s answer has the end of its output.',
   entry: '/app',
-  modes: [{ id: 'queue', label: 'Test runs', scope: 'global' }],
+  /* What its content belongs to (protocol 2.29.0): one mode per scope, the default first. */
+  modes: [
+    { id: 'queue', label: 'Test runs', scope: 'machine', scopeSays: 'every project’s test runs on this computer, whatever is open here' },
+    { id: 'here', label: 'This project', scope: 'project', scopeSays: 'this project’s test runs' },
+  ],
   mcp: {
     url: '/mcp',
     transport: 'http',
