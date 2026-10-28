@@ -2,6 +2,7 @@ import { DOOR_PLACE_SAYS, manifestSchema, placeDefaults, type DoorPlace, type Ma
 import {
   establishBuild,
   mintTicket,
+  personEnv,
   refuseTicket,
   resolveDoorPlace,
   resolveDoorProject,
@@ -187,9 +188,13 @@ export function mcpAsker(place: DoorPlace | null, token: string | null): Asker {
   }
 }
 
-/** The environment an agent's run gets: this module's own, less secrets and Kehikot's plumbing. A login shell adds the person's PATH. */
-export function agentEnv(): Record<string, string> {
-  const made = runEnv({ ...process.env }, [], true)
+/**
+ * The environment an agent's run gets: this module's own as the person's (`personEnv`, without the
+ * host's own `bun` first on its PATH and `BUN_BE_BUN`), less secrets and Kehikot's plumbing. A login
+ * shell adds the person's PATH.
+ */
+export function agentEnv(env: Record<string, string | undefined> = process.env): Record<string, string> {
+  const made = runEnv(personEnv(env), [], true)
   return 'env' in made ? made.env : {}
 }
 
