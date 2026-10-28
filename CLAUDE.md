@@ -17,10 +17,11 @@ what follows is how THIS repository is built, and the rules a change here keeps.
 | `queue/env.ts`, `queue/asks.ts` | What of a caller's environment a run gets; what a caller may ask. |
 | `queue/settings.ts`, `queue/machine.ts` | Capacity settings (Settings › Modules); the machine folder and the CLI token. |
 | `doors.ts` | `/healthz`, `/mcp` (queue_run/status/wait/cancel), the page's `/api/*`, the settings door. |
+| `queue/origin.ts`, `queue/origin-find.ts` | Where a run came from (kept on the run, no environment) and what the jump-into button does with it (`view.goto`, project open only). |
 | `store.ts` | The only write into a project: run results, `.kehikot/queue/runs.json`. |
 | `bin/kehikot-queue(.ts)`, `hooks/pre-push` | The CLI for shells and hooks; the hook snippet. |
 | `src/app.tsx`, `src/inbox.ts`, `src/header.ts` | The page, the Inbox items, the header switch. |
-| `serve.ts`, `build.ts` | The built page on Bun (ready-built); Vite in a checkout. |
+| `serve.ts`, `build.ts` | The built page on Bun (ready-built); Vite in a checkout. Both take `isOurs` from `doors.ts`: add a path there, never in one of them (`test/serves.test.ts`). |
 
 ## The rules
 

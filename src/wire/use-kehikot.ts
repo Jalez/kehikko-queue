@@ -12,7 +12,7 @@ import { ID } from '../../manifest.ts'
  * picked, by name. A plain object, so a screen renders in a test without a host.
  */
 export interface Host
-  extends Pick<ProtocolHost, 'where' | 'project' | 'projectPath' | 'epic' | 'parts' | 'theme' | 'header' | 'activity'> {
+  extends Pick<ProtocolHost, 'where' | 'project' | 'projectPath' | 'epic' | 'parts' | 'theme' | 'header' | 'activity' | 'request'> {
   /** The names of the parts of the epic picked in the host's bar. Empty is the whole epic. */
   picked: string[]
 }

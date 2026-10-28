@@ -14,6 +14,7 @@ export function aRun(over: Partial<RunView> = {}): RunView {
     argv: ['bun', 'test'],
     cwd: '/p',
     asker: { via: 'cli', said: 'pre-push hook, in /p', token: null, conversation: null },
+    origin: null,
     state: 'failed',
     why: null,
     pri: 0,

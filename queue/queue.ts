@@ -7,6 +7,7 @@ import { LIMITS, type RunResult } from 'kehikot-module-protocol'
 import { alive, capLog, exitFile, exitOf, LOG_MOST, logFile, readLog, shellSpawner, stopGroup, tailOf, type Spawner } from './runner.ts'
 import { decide, moved, ordered, priorityOf, waitingSaid, type Capacity, type Move } from './schedule.ts'
 import { ensureDirs, exitDir, logsDir } from './machine.ts'
+import type { Origin } from './origin.ts'
 
 /**
  * The queue: every run asked for on this computer, from any session, in one list. It starts each
@@ -52,6 +53,8 @@ export interface Ask {
   epic: string | null
   project: string | null
   asker: Asker
+  /** Where it came from, as far as was known; absent is unknown. */
+  origin?: Origin | null
 }
 
 export interface Run {
@@ -66,6 +69,8 @@ export interface Run {
   argv: string[]
   cwd: string
   asker: Asker
+  /** Where it came from, for the jump-into button. Null: unknown (a run kept before this was recorded has none). */
+  origin: Origin | null
   state: State
   /** Why it ended the way it did, when that is not plain from the exit code. */
   why: string | null
@@ -219,6 +224,7 @@ export class Queue {
       argv: ask.argv,
       cwd: ask.cwd,
       asker: ask.asker,
+      origin: ask.origin ?? null,
       state: 'queued',
       why: null,
       pri: priorityOf(ask.kind),

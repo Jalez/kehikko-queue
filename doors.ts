@@ -11,10 +11,11 @@ import {
 } from 'kehikot-module-protocol/serve'
 
 import { DECLARED, ID, VERSION } from './manifest.ts'
-import { skillAt, skillDeclarations, serveFrom } from './skills.ts'
+import { isSkillPath, skillAt, skillDeclarations, serveFrom } from './skills.ts'
 import { projectOf, publish } from './store.ts'
 import { argvOf, cwdOf, epicOf, kindOf, labelOf, refsOf } from './queue/asks.ts'
 import { runEnv } from './queue/env.ts'
+import { originFromCwd, originFromPlace } from './queue/origin-find.ts'
 import { cliToken, queueDir } from './queue/machine.ts'
 import { ended, Queue, type Asker, type Run, type RunView } from './queue/queue.ts'
 import { minutes, type Move } from './queue/schedule.ts'
@@ -66,7 +67,13 @@ export const CLI_TOKEN = (): string => cliToken(DIR)
 
 const ok = (body: unknown): Reply => ({ status: 200, body })
 const bad = (why: string, status = 400): Reply => ({ status, body: { ok: false, error: why } })
-const plain = (text: string): Reply => ({ status: 200, body: null, raw: { bytes: text, type: 'text/markdown; charset=utf-8' } })
+const plain = (text: string, type = 'text/markdown; charset=utf-8'): Reply => ({ status: 200, body: null, raw: { bytes: text, type } })
+
+/**
+ * The paths this module's own doors answer. `vite.config.ts` and `serve.ts` both hand this to the
+ * protocol's server, so the built server and Vite serve the same paths (0.1.0's built server did not).
+ */
+export const isOurs = (path: string): boolean => path === '/healthz' || path === '/mcp' || path.startsWith('/api/') || isSkillPath(path)
 
 /* ------------------------------------------------------------------ *
  * The words
@@ -242,6 +249,8 @@ async function call(name: string, args: Record<string, unknown>, query: URLSearc
     if (!label.ok) throw new Error(label.why)
     const refs = refsOf(args.ref ?? args.refs)
     if (!refs.ok) throw new Error(refs.why)
+    const epic = epicOf(named.epic)
+    const origin = place ? originFromPlace(place, cwd.value) : await originFromCwd(cwd.value, epic, ASK.options)
     const run = q.enqueue({
       argv: argv.value,
       cwd: cwd.value,
@@ -249,9 +258,10 @@ async function call(name: string, args: Record<string, unknown>, query: URLSearc
       kind: kind.value,
       label: label.value,
       refs: refs.value,
-      epic: epicOf(named.epic),
+      epic,
       project: project ?? projectOf(cwd.value),
       asker: mcpAsker(place, place ? token : null),
+      origin,
     })
     const view = q.view(run)
     return [
@@ -335,6 +345,14 @@ export async function answer(
     if (!q.get(id)) return bad('There is no such run.', 404)
     const from = Number(query.get('from') ?? 0)
     return ok({ ok: true, ...q.output(id, Number.isFinite(from) && from >= 0 ? from : 0) })
+  }
+
+  /* The whole log, as text: for "Open full log" when the drawer shows only the end of it. */
+  if (path === '/api/log' && method === 'GET') {
+    const id = query.get('id') ?? ''
+    if (!q.get(id)) return bad('There is no such run.', 404)
+    const size = q.output(id, 0, 0).size
+    return plain(q.output(id, 0, Math.max(size, 1)).text, 'text/plain; charset=utf-8')
   }
 
   if (path === '/api/act' && method === 'POST') {
