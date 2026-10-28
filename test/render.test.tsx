@@ -17,6 +17,7 @@ const host = (over: Partial<Host> = {}): Host => ({
   theme: 'light',
   header: () => {},
   activity: () => {},
+  request: async () => ({}),
   picked: [],
   ...over,
 })
@@ -45,7 +46,7 @@ const settle = () => act(async () => {
 })
 
 describe('the Test runs page', () => {
-  test('lists waiting, running and finished runs with where each came from; a failed run shows its output', async () => {
+  test('lists waiting, running and finished runs with where each came from; its output is in a drawer, not inline', async () => {
     const runs = [
       aRun({ id: 'w1', state: 'queued', startedAt: null, finishedAt: null, exit: null, waiting: 'Next: waiting for one of the 2 running to finish (2 at once).', position: 1 }),
       aRun({ id: 'u1', state: 'running', finishedAt: null, exit: null, label: 'unit' }),
@@ -64,11 +65,9 @@ describe('the Test runs page', () => {
     /* The label is text, never markup. */
     expect(document.querySelector('script')).toBeNull()
     expect(finished.textContent).toContain('<script>x</script>')
-    /* The failed run's output is open; the passed one's is not until asked. */
-    const outputs = screen.getAllByTestId('output')
-    expect(outputs).toHaveLength(1)
-    expect(outputs[0]!.textContent).toContain('output of f1')
-    expect(outputs[0]!.querySelector('b')).toBeNull()
+    /* No output is open inline, whatever the state: each row has an Output button and the drawer is closed. */
+    expect(screen.queryAllByTestId('output')).toHaveLength(0)
+    expect(screen.getAllByRole('button', { name: /^Output of / })).toHaveLength(3)
     expect(screen.getByTestId('machine').textContent).toContain('12 cores · load 3.2 · at most 2 at once')
   })
 

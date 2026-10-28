@@ -32,6 +32,8 @@ export const DECLARED: Manifest = manifestSchema.parse({
   protocol: PROTOCOL,
   id: ID,
   name: 'Test runs',
+  /* The icon the official list gives it: Lucide's timer. */
+  icon: 'lucide:timer',
   version: VERSION,
   /* The format of what this module keeps under `.kehikot/`. Raise it only in
      the release that first writes data an older release cannot read. */
@@ -56,8 +58,9 @@ export const DECLARED: Manifest = manifestSchema.parse({
   partless: 'A test run is this computer\'s, for a change or an issue, never for a part of an epic.',
   declares: {
     protocol: `>=${PROTOCOL} <${PROTOCOL + 1}`,
-    /* Only what is called. activity:report for `activity.set`: a finished run is in the Inbox, a failed one needs you. */
-    uses: ['activity:report'],
+    /* Only what is called. activity:report for `activity.set`: a finished run is in the Inbox, a failed one needs you.
+       view:navigate for `view.goto`: the jump-into button on a run. */
+    uses: ['activity:report', 'view:navigate'],
     /* True because this module takes writes (cancel, move): its page is framed on its real origin. */
     storage: true,
     prompt: false,

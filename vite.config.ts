@@ -5,10 +5,9 @@ import react from '@vitejs/plugin-react'
 import { beforeDoors, doors, originFor, serves } from 'kehikot-module-protocol/serve'
 import { defineConfig, type Plugin } from 'vite'
 
-import { BUILD, MANIFEST, TICKET, answer, queue, servingAt } from './doors.ts'
+import { BUILD, MANIFEST, TICKET, answer, isOurs, queue, servingAt } from './doors.ts'
 import { QUEUE_DOOR } from './queue/door.ts'
 import { ID, PREFERRED_PORT } from './manifest.ts'
-import { isSkillPath } from './skills.ts'
 
 /** Once listening, say the port really bound (`serves()` may have moved it): the skills name that origin. */
 function origin(): Plugin {
@@ -49,7 +48,7 @@ export default defineConfig({
       answer: (method, path, query, body, ticket) => answer(method, path, query, body, ticket),
       build: BUILD,
       page: { title: 'Test runs', ticket: TICKET },
-      ours: (path) => path === '/healthz' || path === '/mcp' || path.startsWith('/api/') || isSkillPath(path),
+      ours: isOurs,
     }),
     react(),
     tailwindcss(),

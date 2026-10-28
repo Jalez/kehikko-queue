@@ -2,6 +2,7 @@ import { resolveDoorPlace, sameTicket, type Before, type HostHasProjectOptions }
 
 import { argvOf, cwdOf, epicOf, kindOf, labelOf, refsOf } from './asks.ts'
 import { runEnv } from './env.ts'
+import { originFromCwd, originFromPlace } from './origin-find.ts'
 import { ended, type Asker, type Queue } from './queue.ts'
 import { projectOf } from '../store.ts'
 
@@ -78,6 +79,8 @@ export function cliDoor(options: CliDoorOptions): Before {
         token: place ? token : null,
         conversation: place?.conversation ?? null,
       }
+      const epic = epicOf(body.epic) ?? place?.epic ?? null
+      const origin = place ? originFromPlace(place, cwd.value) : await originFromCwd(cwd.value, epic, options.ask?.() ?? {})
       const run = q.enqueue({
         argv: argv.value,
         cwd: cwd.value,
@@ -85,9 +88,10 @@ export function cliDoor(options: CliDoorOptions): Before {
         kind: kind.value,
         label: label.value,
         refs: refs.value,
-        epic: epicOf(body.epic) ?? place?.epic ?? null,
+        epic,
         project: place?.project ?? projectOf(cwd.value),
         asker: asked,
+        origin,
       })
       return Response.json({ ok: true, id: run.id, key: run.key, dropped: env.dropped, run: q.view(run) })
     }
