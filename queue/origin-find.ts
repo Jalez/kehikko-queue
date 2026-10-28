@@ -18,6 +18,7 @@ export function branchOf(cwd: string): string | null {
 export function originFromPlace(place: DoorPlace, cwd: string | null): Origin {
   return {
     project: place.project,
+    projectId: place.projectId,
     projectName: place.projectName ?? null,
     epic: place.epic,
     parts: [...place.parts],
@@ -55,7 +56,7 @@ export async function originFromCwd(cwd: string, epic: string | null, options: H
   for (const folder of candidates(cwd)) {
     const said = await hostProject(folder, options)
     if (said.project) {
-      return { project: said.path, projectName: baseName(said.path), epic, parts: [], kehikko: null, kehikkoName: null, session: null, branch: branchOf(cwd) }
+      return { project: said.path, projectId: said.id ?? null, projectName: baseName(said.path), epic, parts: [], kehikko: null, kehikkoName: null, session: null, branch: branchOf(cwd) }
     }
   }
   return null

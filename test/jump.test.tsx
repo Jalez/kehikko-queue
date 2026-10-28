@@ -18,6 +18,7 @@ function setup(runs: Overview['runs'], over: Partial<Host> = {}, answer: unknown
     where: 'hosted',
     project: 'p',
     projectPath: '/p',
+    projectId: null,
     epic: 'queue',
     parts: [{ id: 'p1', heading: 'methods' }] as unknown as Host['parts'],
     theme: 'light',
@@ -58,7 +59,7 @@ describe('the jump-into button', () => {
     await settle()
     fireEvent.click(jumpIn('a'))
     await settle()
-    expect(asked).toEqual([{ method: 'view.goto', params: { epic: 'queue', parts: ['p1'], kehikko: 'k1' } }])
+    expect(asked).toEqual([{ method: 'view.goto', params: { epic: 'queue', parts: ['p1'], kehikko: 'k1', show: { subject: 'agent-session', id: 's1' } } }])
     expect(screen.queryByTestId('jump-said')).toBeNull()
   })
 
@@ -80,10 +81,37 @@ describe('the jump-into button', () => {
     expect(asked).toEqual([])
   })
 
-  test('is disabled for a run of another project, which view.goto cannot reach', async () => {
-    setup([aRun({ id: 'a', origin: { ...origin, project: '/other' }, project: '/other' })], {}, undefined)
+  test('is enabled for a run of another project, its tooltip naming the project, and asks with project and show', async () => {
+    const other = { ...origin, project: '/work/other', projectId: 'project-other-1', projectName: 'Other' }
+    const asked = setup([aRun({ id: 'a', origin: other, project: '/work/other' })])
     await settle()
-    expect(jumpIn('a').disabled).toBe(true)
+    expect(jumpIn('a').disabled).toBe(false)
+    expect(within(rowOf('a')).getByTestId('jump-tip').getAttribute('title')).toBe('Go to Other · Wide · queue · methods (in another project)')
+    fireEvent.click(jumpIn('a'))
+    await settle()
+    expect(asked).toEqual([
+      {
+        method: 'view.goto',
+        params: { epic: 'queue', parts: ['p1'], kehikko: 'k1', project: 'project-other-1', show: { subject: 'agent-session', id: 's1' } },
+      },
+    ])
+  })
+
+  test('a run kept by 0.2.0, with no project id, names the project by its folder', async () => {
+    const asked = setup([aRun({ id: 'a', origin: { ...origin, project: '/work/other', projectName: null, session: null }, project: '/work/other' })])
+    await settle()
+    expect(within(rowOf('a')).getByTestId('jump-tip').getAttribute('title')).toBe('Go to other · Wide · queue · methods (in another project)')
+    fireEvent.click(jumpIn('a'))
+    await settle()
+    expect(asked).toEqual([{ method: 'view.goto', params: { epic: 'queue', parts: ['p1'], kehikko: 'k1', project: '/work/other' } }])
+  })
+
+  test('the host\'s refusal of another project is said', async () => {
+    setup([aRun({ id: 'a', origin: { ...origin, project: '/gone' }, project: '/gone' })], {}, { outcome: 'declined', epic: null, why: 'Kehikot does not have that project, so it stayed where it is.' })
+    await settle()
+    fireEvent.click(jumpIn('a'))
+    await settle()
+    expect(screen.getByTestId('jump-said').textContent).toBe('Kehikot does not have that project, so it stayed where it is.')
   })
 })
 
@@ -170,7 +198,7 @@ describe('the output drawer', () => {
       cancel: async () => ({ runs, machine }),
       move: async () => ({ runs, machine }),
     }
-    render(<Screen host={{ where: 'hosted', project: 'p', projectPath: '/p', epic: 'queue', parts: [], theme: 'light', header: () => {}, activity: () => {}, request: async () => ({}), picked: [] }} api={cutApi} now={() => 5000} />)
+    render(<Screen host={{ where: 'hosted', project: 'p', projectPath: '/p', projectId: null, epic: 'queue', parts: [], theme: 'light', header: () => {}, activity: () => {}, request: async () => ({}), picked: [] }} api={cutApi} now={() => 5000} />)
     await settle()
     fireEvent.click(outputButton('first'))
     await settle()

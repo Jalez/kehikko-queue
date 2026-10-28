@@ -61,6 +61,9 @@ export const DECLARED: Manifest = manifestSchema.parse({
     /* Only what is called. activity:report for `activity.set`: a finished run is in the Inbox, a failed one needs you.
        view:navigate for `view.goto`: the jump-into button on a run. */
     uses: ['activity:report', 'view:navigate'],
+    /* The jump-into button's view.goto carries the run's project (when it is not the open one) and
+       the session that asked for it (protocol 2.28.0): a host before 2.28 is not asked. */
+    navigates: ['project', 'show'],
     /* True because this module takes writes (cancel, move): its page is framed on its real origin. */
     storage: true,
     prompt: false,
