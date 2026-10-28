@@ -8,7 +8,7 @@ import { HeaderMenus } from '@/components/header-menus'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet'
-import { headerItems, pressed, type Showing } from '@/header'
+import { headerItems, pressed, showingOf, type Showing } from '@/header'
 import { inboxItems } from '@/inbox'
 import { api as realApi, type Api, type Overview } from '@/wire/api'
 import { useKehikot, type Host } from '@/wire/use-kehikot'
@@ -18,19 +18,14 @@ import type { RunView } from '../queue/queue.ts'
 
 type Press = { item: string; value?: PressValue }
 
-/** The page: the header switch's state, and the queue as last read. */
+/** The page: the queue as last read, at the container's scope (protocol 2.29.0). */
 export function App() {
-  const [showing, setShowing] = useState<Showing>('here')
-  const press = useCallback(({ item, value }: Press) => {
-    const view = pressed(item, value)
-    if (view !== 'here' && view !== 'all') return view
-    setShowing(view)
-  }, [])
+  const press = useCallback(({ item, value }: Press) => pressed(item, value), [])
   const host = useKehikot({ onPress: press })
-  const items = useMemo(() => headerItems(showing), [showing])
+  const items = useMemo(() => headerItems(), [])
   const { header } = host
   useEffect(() => header(items), [header, items])
-  return <Screen host={host} items={items} showing={showing} onPress={press} />
+  return <Screen host={host} items={items} onPress={press} />
 }
 
 /** How often the page reads the queue: often while something waits or runs, seldom otherwise. */
@@ -40,8 +35,8 @@ export const IDLE_MS = 15000
 export function Screen({
   host,
   api = realApi,
-  items = headerItems('here'),
-  showing = 'here',
+  items = headerItems(),
+  showing: asked,
   onPress = () => {},
   now = () => Date.now(),
 }: {
@@ -53,6 +48,8 @@ export function Screen({
   now?: () => number
 }) {
   const server = useServerStanding()
+  /* Every project's runs at This computer (the default), the open project's at Project: the scope, said by the host. */
+  const showing: Showing = asked ?? showingOf(host.workingScope, host.projectPath)
   /* The queue is this computer's: it is drawn with no project open too. */
   const cover = coverFor({ ...host, server }, { project: false })
   const [overview, setOverview] = useState<Overview | null>(null)
@@ -134,7 +131,7 @@ export function Screen({
             ) : null}
             {overview && !runs.length ? (
               <p className="text-muted-foreground text-xs" data-testid="empty">
-                {showing === 'here' && host.projectPath ? 'No test runs for this project lately. Every project: Show › Every project.' : 'No test runs lately.'}
+                {showing === 'here' && host.projectPath ? 'No test runs for this project lately. Every project’s: pick This computer as the scope in its settings.' : 'No test runs lately.'}
               </p>
             ) : null}
             <Group title="Waiting" runs={waiting}>

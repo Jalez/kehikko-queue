@@ -1,6 +1,6 @@
 {
   "name": "kehikko-queue",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "private": true,
   "type": "module",
   "description": "Test runs, a module a Kehikot host frames: one machine-wide queue for heavy test runs from every session, started when there is room.",
