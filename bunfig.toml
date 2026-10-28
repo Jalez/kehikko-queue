@@ -1,0 +1,4 @@
+# A DOM for every test file, registered once, so a component test never runs
+# without a document.
+[test]
+preload = ["./test/setup.ts"]

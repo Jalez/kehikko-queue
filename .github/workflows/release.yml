@@ -1,0 +1,16 @@
+# Publish a release of this module when a vX.Y.Z tag is pushed. Kehikot installs
+# and updates modules from their releases. The steps are shared by every module
+# and live in Jalez/kehikko-desktop; see CLAUDE.md, "Releasing".
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    uses: Jalez/kehikko-desktop/.github/workflows/module-release.yml@main

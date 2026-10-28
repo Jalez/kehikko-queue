@@ -1,0 +1,11 @@
+# No trailing slash: a symlinked node_modules (a linked local dependency) is not
+# a directory, and `node_modules/` would let the link be committed.
+node_modules
+
+# There is no build; Vite serves the page. A stray dist is a second, stale answer.
+dist
+
+# What this module keeps while you try it on itself: never committed.
+.kehikot
+
+.DS_Store
