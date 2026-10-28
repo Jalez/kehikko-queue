@@ -1,0 +1,18 @@
+#!/bin/sh
+# A pre-push hook that runs the checks through Kehikot's Test runs queue, so pushes from several
+# sessions on one computer do not start their suites at once and starve each other. The push waits
+# for the result, and goes out only when the checks pass: the exit code is the checks' own.
+#
+# When Test runs is not running, kehikot-queue runs the checks here, now, and says so. When
+# kehikot-queue is not installed, this runs them directly. A hook never breaks because of the queue.
+#
+# Install (your choice, per repository):
+#   cp hooks/pre-push <repo>/.git/hooks/pre-push && chmod +x <repo>/.git/hooks/pre-push
+# then change CHECKS below to your repository's own command.
+
+CHECKS="bun run typecheck && bun test"
+
+if command -v kehikot-queue >/dev/null 2>&1; then
+  exec kehikot-queue run --kind push --from "pre-push hook" --label "pre-push $(basename "$(git rev-parse --show-toplevel)")" -- /bin/sh -c "$CHECKS"
+fi
+exec /bin/sh -c "$CHECKS"

@@ -2,17 +2,18 @@ import { resolve } from 'node:path'
 
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
-import { doors, originFor, serves } from 'kehikot-module-protocol/serve'
+import { beforeDoors, doors, originFor, serves } from 'kehikot-module-protocol/serve'
 import { defineConfig, type Plugin } from 'vite'
 
-import { BUILD, MANIFEST, TICKET, answer, servingAt } from './doors.ts'
+import { BUILD, MANIFEST, TICKET, answer, queue, servingAt } from './doors.ts'
+import { QUEUE_DOOR } from './queue/door.ts'
 import { ID, PREFERRED_PORT } from './manifest.ts'
 import { isSkillPath } from './skills.ts'
 
 /** Once listening, say the port really bound (`serves()` may have moved it): the skills name that origin. */
 function origin(): Plugin {
   return {
-    name: 'example-origin',
+    name: 'queue-origin',
     apply: 'serve',
     configureServer(server) {
       server.httpServer?.once('listening', () => {
@@ -41,11 +42,13 @@ export default defineConfig({
   plugins: [
     serves({ id: ID, prefer: PREFERRED_PORT }),
     origin(),
+    /* The CLI's door and the fence in front of /mcp: before the doors, because they need the headers. */
+    beforeDoors(QUEUE_DOOR, { name: 'queue-door', setup: () => void queue() }),
     doors({
       manifest: MANIFEST,
-      answer,
+      answer: (method, path, query, body, ticket) => answer(method, path, query, body, ticket),
       build: BUILD,
-      page: { title: 'Example', ticket: TICKET },
+      page: { title: 'Test runs', ticket: TICKET },
       ours: (path) => path === '/healthz' || path === '/mcp' || path.startsWith('/api/') || isSkillPath(path),
     }),
     react(),
@@ -53,4 +56,5 @@ export default defineConfig({
   ],
   resolve: { alias: { '@': resolve(import.meta.dirname, 'src') } },
   server: { host: '127.0.0.1', cors: false },
+  build: { outDir: 'dist', emptyOutDir: true },
 })

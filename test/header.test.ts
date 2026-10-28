@@ -23,7 +23,7 @@ describe('the header', () => {
 
   test('fits at 380, 280 and 200 pixels: short labels, and nothing pinned beyond what a narrow header drops', () => {
     for (const width of WIDTHS) {
-      const items = headerItems('open')
+      const items = headerItems('here')
       /* Under 360 pixels the host draws no pinned run; at most PINNED_MAX above it. */
       const pinned = items.filter((item) => item.kind === 'run' && item.pinned)
       expect(pinned.length).toBeLessThanOrEqual(width >= 360 ? LIMITS.PINNED_MAX : items.length)

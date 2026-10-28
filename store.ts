@@ -1,160 +1,71 @@
-import { randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs'
-import { isAbsolute } from 'node:path'
+import { spawnSync } from 'node:child_process'
+import { existsSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
+import { dirname, isAbsolute, join } from 'node:path'
 
-import { LIMITS, kehikotDir, moduleDir, moduleFile, within } from 'kehikot-module-protocol'
+import { KEHIKOT_DIR, moduleDir, moduleFile, type RunResult } from 'kehikot-module-protocol'
+import { writeRuns } from 'kehikot-module-protocol/serve'
 
 import { ID } from './manifest.ts'
 
 /**
- * This module's material, kept inside the project it is about:
- * `<project>/.kehikot/example/notes.json`.
+ * The only thing this module writes into a project: the runs it holds for that project, published as
+ * the protocol's run results (2.27.0), `<project>/.kehikot/queue/runs.json`, so any module showing a
+ * change or an issue can show whether its tests pass without knowing this module exists. Everything
+ * else — the queue itself, the logs — is machine state (`queue/machine.ts`).
  *
- * The folder and the join are the protocol's (`moduleDir`, `moduleFile`), so every
- * module agrees on where data lives, and `bun test` checks nothing here builds a
- * path of its own (test/storage-boundary.test.ts). There is no default project:
- * with none, every read is empty and every write refused, because a guessed
- * folder is one where work is written and never seen again.
- *
- * Both sides are realpath'd before the containment check, so a `.kehikot` that
- * is a symlink out of the project is refused rather than followed.
+ * Written only into a folder that is already a Kehikot project (it has `.kehikot/`): a run from a
+ * folder nobody opened in Kehikot is still run, it only has nowhere to be shown. The folder gets a
+ * `.gitignore` of its own, because a run result is this machine's news and not the project's history.
  */
-export const FILE = 'notes'
+export const RUNS_IGNORE = '# Test runs on this computer: not the project\'s history.\nruns.json\nruns.json.*\n'
 
-/** One note: what it says, the epic and parts it was written in, and whether it is done. */
-export interface Note {
-  id: string
-  text: string
-  /** The epic it belongs to; `null` for the project as a whole. */
-  epic: string | null
-  /** The ids of the parts picked when it was written. Empty: the whole epic. */
-  parts: string[]
-  done: boolean
-  /** When it was written, as an ISO time. */
-  at: string
-}
-
-/** What a page may ask of the store. One edit per call. */
-export type Edit =
-  | { op: 'add'; text: string; epic: string | null; parts: string[] }
-  | { op: 'done'; id: string; done: boolean }
-  | { op: 'remove'; id: string }
-
-export type Result<T> = { ok: true; value: T } | { ok: false; error: string }
-
-/** A note's text is a line or two, not a document. */
-export const NOTE_MAX = 500
-/** A project keeps at most this many notes; the oldest done ones are the ones to remove. */
-export const NOTES_MAX = 500
-
-const NO_PROJECT = 'Nothing has said which project this is, so there is nowhere to keep anything. Open a project in Kehikot.'
-
-/** Every note kept for one project, oldest first. */
-export function readNotes(projectPath: string | null | undefined): Result<Note[]> {
-  const file = fileFor(projectPath, false)
-  if (!file.ok) return file
-  if (!existsSync(file.value)) return { ok: true, value: [] }
+export function isProject(path: string | null | undefined): path is string {
+  if (typeof path !== 'string' || !isAbsolute(path)) return false
   try {
-    const parsed = JSON.parse(readFileSync(file.value, 'utf8')) as { notes?: unknown }
-    return { ok: true, value: Array.isArray(parsed.notes) ? parsed.notes.filter(isNote) : [] }
+    return statSync(join(path, KEHIKOT_DIR)).isDirectory()
   } catch {
-    return { ok: false, error: `${file.value} is not readable JSON. Nothing was changed; fix or remove the file.` }
+    return false
   }
 }
 
-/** Apply one edit and keep the result. Written to a temporary file and renamed, so a crash never leaves half a file. */
-export function editNotes(projectPath: string | null | undefined, edit: Edit): Result<Note[]> {
-  const read = readNotes(projectPath)
-  if (!read.ok) return read
-  const next = applied(read.value, edit)
-  if (!next.ok) return next
-  const file = fileFor(projectPath, true)
-  if (!file.ok) return file
-  const temporary = `${file.value}.${process.pid}.tmp`
-  writeFileSync(temporary, `${JSON.stringify({ notes: next.value }, null, 2)}\n`)
-  renameSync(temporary, file.value)
-  return next
-}
-
-/** The edit, as a pure function of the list. Refused with a sentence, never clipped. */
-export function applied(notes: readonly Note[], edit: Edit): Result<Note[]> {
-  if (edit.op === 'add') {
-    const text = edit.text.trim()
-    if (!text) return { ok: false, error: 'A note needs some words.' }
-    if (text.length > NOTE_MAX) return { ok: false, error: `A note is at most ${NOTE_MAX} characters; this one is ${text.length}.` }
-    if (notes.length >= NOTES_MAX) return { ok: false, error: `This project already keeps ${NOTES_MAX} notes. Remove some done ones first.` }
-    const parts = edit.parts.slice(0, LIMITS.PLACE_PARTS)
-    return { ok: true, value: [...notes, { id: randomUUID(), text, epic: edit.epic, parts, done: false, at: new Date().toISOString() }] }
-  }
-  if (!notes.some((note) => note.id === edit.id)) return { ok: false, error: 'That note is not here any more.' }
-  if (edit.op === 'done') return { ok: true, value: notes.map((note) => (note.id === edit.id ? { ...note, done: edit.done } : note)) }
-  return { ok: true, value: notes.filter((note) => note.id !== edit.id) }
-}
-
-function isNote(value: unknown): value is Note {
-  const note = value as Partial<Note> | null
-  return (
-    !!note
-    && typeof note.id === 'string'
-    && typeof note.text === 'string'
-    && (note.epic === null || typeof note.epic === 'string')
-    && Array.isArray(note.parts)
-    && note.parts.every((part) => typeof part === 'string')
-    && typeof note.done === 'boolean'
-    && typeof note.at === 'string'
-  )
-}
-
-/** The data file's path, checked to resolve inside the project. `make` creates the folder first. */
-function fileFor(projectPath: string | null | undefined, make: boolean): Result<string> {
-  const root = projectRoot(projectPath)
-  if (!root.ok) return root
-  const dir = moduleDir(root.value, ID)!
-  const levels = [kehikotDir(root.value)!, dir]
-  /* Checked before making anything, so a folder that escapes is never written into, and again after. */
-  const escaped = escapesAny(root.value, levels)
-  if (escaped) return { ok: false, error: escaped }
-  if (make) {
-    mkdirSync(dir, { recursive: true })
-    const after = escapesAny(root.value, levels)
-    if (after) return { ok: false, error: after }
-  }
-  const file = moduleFile(root.value, ID, FILE)!
-  if (existsSync(file)) {
-    const out = escapes(root.value, file)
-    if (out) return { ok: false, error: out }
-  }
-  return { ok: true, value: file }
-}
-
-function projectRoot(projectPath: string | null | undefined): Result<string> {
-  const raw = typeof projectPath === 'string' ? projectPath.trim() : ''
-  if (!raw) return { ok: false, error: NO_PROJECT }
-  if (!isAbsolute(raw)) return { ok: false, error: `"${raw}" is not an absolute path.` }
-  try {
-    const real = realpathSync(raw)
-    if (!statSync(real).isDirectory()) return { ok: false, error: `"${raw}" is not a folder.` }
-    return { ok: true, value: real }
-  } catch {
-    return { ok: false, error: `There is no folder at "${raw}" on this computer.` }
-  }
-}
-
-function escapesAny(root: string, paths: string[]): string | null {
-  for (const path of paths) {
-    if (!existsSync(path)) continue
-    const out = escapes(root, path)
-    if (out) return out
-  }
-  return null
-}
-
-function escapes(root: string, child: string): string | null {
+/**
+ * The Kehikot project a working folder belongs to: the folder itself, or the main checkout of the
+ * git repository it is a worktree or a subfolder of, when that is a project. Null for none.
+ */
+export function projectOf(cwd: string): string | null {
   let real: string
   try {
-    real = realpathSync(child)
+    real = realpathSync(cwd)
   } catch {
-    return `${child} could not be resolved, so nothing is read or written through it.`
+    return null
   }
-  return within(root, real) ? null : `${child} resolves to ${real}, outside the project. Refused rather than followed.`
+  /* Up the folders first: a subfolder of a project is in it. */
+  for (let at = real; ; at = dirname(at)) {
+    if (isProject(at)) return at
+    if (dirname(at) === at) break
+  }
+  /* A worktree elsewhere: its main checkout, by the repository's common folder. */
+  const asked = spawnSync('git', ['-C', real, 'rev-parse', '--path-format=absolute', '--git-common-dir'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000 })
+  if (asked.status !== 0) return null
+  const common = (asked.stdout ?? '').trim()
+  if (!common.endsWith('/.git')) return null
+  const main = dirname(common)
+  return isProject(main) ? main : null
 }
+
+/** Publish one project's runs, whole. Never throws: a project that cannot be written is said, not fatal. */
+export function publish(projectPath: string, runs: readonly RunResult[]): string | null {
+  try {
+    if (!isProject(projectPath)) return null
+    writeRuns(projectPath, ID, runs)
+    const dir = moduleDir(projectPath, ID)
+    const ignore = dir ? join(dir, '.gitignore') : null
+    if (ignore && (!existsSync(ignore) || readFileSync(ignore, 'utf8') !== RUNS_IGNORE)) writeFileSync(ignore, RUNS_IGNORE)
+    return null
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error)
+  }
+}
+
+/** Where a project's run results are, for the words. */
+export const runsFileOf = (projectPath: string) => moduleFile(projectPath, ID, 'runs')

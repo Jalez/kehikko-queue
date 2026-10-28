@@ -1,4 +1,4 @@
-# Example — notes for agents
+# Test runs — notes for agents
 
 A Kehikot module: a program with its own server, page and MCP door that a
 Kehikot host frames in a container. The whole guide is
@@ -10,12 +10,17 @@ what follows is how THIS repository is built, and the rules a change here keeps.
 | | |
 |---|---|
 | `manifest.ts` | Who the module is. `DECLARED`; the version is package.json's. |
-| `doors.ts` | Every door but the page: `/healthz`, `/mcp`, `/api/*`, the skills. Pure `answer()`; tests call it directly. |
-| `store.ts` | The only code that touches project data. |
-| `skills.ts`, `plugin/skills/<name>/SKILL.md` | The Claude Code skills offered, served with the real origin filled in. |
-| `src/header.ts`, `src/inbox.ts` | What goes in the container's header and in the Inbox: pure functions of state. |
-| `src/app.tsx` | The page. `Screen` renders from a plain `Host`, so tests need no host. |
-| `dev/stub-host.ts` | `bun run stub`: frames the module the way Kehikot does, for looking at it. |
+| `queue/schedule.ts` | When a run starts: capacity, load guard, starvation bound, priority, the person's moves. Pure. |
+| `queue/queue.ts` | The queue: runs, their states, what is kept on disk, picking up running runs after a restart. |
+| `queue/runner.ts` | Spawning in its own process group, the exit-file wrapper, logs (capped), cancel. |
+| `queue/cli-door.ts` | The CLI's door and the fence in front of `/mcp` (a `before`: it needs the headers). |
+| `queue/env.ts`, `queue/asks.ts` | What of a caller's environment a run gets; what a caller may ask. |
+| `queue/settings.ts`, `queue/machine.ts` | Capacity settings (Settings › Modules); the machine folder and the CLI token. |
+| `doors.ts` | `/healthz`, `/mcp` (queue_run/status/wait/cancel), the page's `/api/*`, the settings door. |
+| `store.ts` | The only write into a project: run results, `.kehikot/queue/runs.json`. |
+| `bin/kehikot-queue(.ts)`, `hooks/pre-push` | The CLI for shells and hooks; the hook snippet. |
+| `src/app.tsx`, `src/inbox.ts`, `src/header.ts` | The page, the Inbox items, the header switch. |
+| `serve.ts`, `build.ts` | The built page on Bun (ready-built); Vite in a checkout. |
 
 ## The rules
 
@@ -28,8 +33,12 @@ what follows is how THIS repository is built, and the rules a change here keeps.
   every change. It is one row at 380, 280 and 200 pixels: short labels (`LABEL_FIT`).
 - **A module's strings are text.** Labels, notes and reasons are drawn as text,
   never as markup or links.
-- **Page-only writes.** Every write to `/api` carries the page's ticket
-  (`refuseTicket`); the MCP door only reads.
+- **Page-only writes.** Every write to the page's `/api` carries the page's ticket
+  (`refuseTicket`).
+- **This module runs commands.** Only what a caller asked, as an argv. The CLI door and `/mcp`
+  answer programs only (no `Origin`, no `Sec-Fetch-Site`), the CLI door only with the 0600 token.
+  Never log or write down a run's environment. Never widen these; a test holds each.
+- **Code runs under Node (Vite) and Bun (`serve.ts`).** Use `node:` APIs on the server, never `Bun.*`.
 - **Agents never press what is a person's.** `agents: true` goes only on a
   harmless switch, toggle or jump; never on a run that writes, sends or
   deletes, never on a `confirm` run.
@@ -74,5 +83,5 @@ Kehikot installs and updates this module from its GitHub releases, not from `mai
    `git tag -a v<version> -m v<version> <merge-commit> && git push origin v<version>`.
 5. `.github/workflows/release.yml` checks that the tag matches `package.json`
    and is on `main`, checks the notes, typechecks and tests, then publishes the
-   release "Example <version>". If a check fails nothing is published: fix it on
+   release "Test runs <version>". If a check fails nothing is published: fix it on
    `main`, then tag again.

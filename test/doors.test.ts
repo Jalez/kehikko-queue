@@ -1,96 +1,147 @@
-import { afterAll, describe, expect, test } from 'bun:test'
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { skillPath, skillTextIssue } from 'kehikot-module-protocol'
+import { beforeInfo } from 'kehikot-module-protocol/serve'
 
-import { ASK, MANIFEST, TICKET, answer, saidNotes, servingAt } from '../doors.ts'
-import { ID } from '../manifest.ts'
-import type { Note } from '../store.ts'
+import { ASK, TICKET, answer, mcp, mcpAsker, tools } from '../doors.ts'
+import { cliDoor, TOKEN_HEADER } from '../queue/cli-door.ts'
+import { Queue } from '../queue/queue.ts'
 
-const project = realpathSync(mkdtempSync(join(tmpdir(), 'kehikko-example-doors-')))
-afterAll(() => rmSync(project, { recursive: true, force: true }))
+const TOKEN = 'A'.repeat(43)
+let dir = ''
+let q: Queue
+beforeEach(() => {
+  dir = mkdtempSync(join(tmpdir(), 'queue-doors-'))
+  q = new Queue({ dir, capacity: () => ({ most: 2, loadAbove: 100, waitMs: 600_000 }), load: () => 0 })
+})
+afterEach(() => {
+  q.stop()
+  rmSync(dir, { recursive: true, force: true })
+  ASK.options = {}
+})
 
-/* A host that holds exactly one project, and no conversation with a place: the door asks it, never a real one. */
-ASK.options = {
-  env: { KEHIKOT_ORIGINS: 'http://127.0.0.1:1' },
-  fetch: (async (input: string | URL | Request) => {
-    const url = new URL(String(input))
-    if (url.pathname === '/host/is-project') {
-      const path = url.searchParams.get('path')
-      return Response.json(path === project ? { ok: true, project: true, path } : { ok: true, project: false })
+const door = () => cliDoor({ queue: () => q, token: () => TOKEN, everyMs: 50 })
+const ask = (path: string, init: RequestInit & { headers?: Record<string, string> } = {}) => {
+  const request = new Request(`http://127.0.0.1:8110${path}`, init)
+  return door()(request, beforeInfo(request))
+}
+const runBody = (over: Record<string, unknown> = {}) =>
+  JSON.stringify({ argv: ['sh', '-c', 'echo hi; sleep 1; exit 3'], cwd: tmpdir(), env: { PATH: process.env.PATH }, kind: 'push', label: 'pre-push', ...over })
+
+describe('the CLI door refuses what is not a program of this user', () => {
+  test('a page, of any origin, even this module\'s own', async () => {
+    for (const origin of ['http://evil.example', 'http://127.0.0.1:8110']) {
+      const answer = await ask('/api/queue/run', { method: 'POST', headers: { origin, 'content-type': 'application/json', [TOKEN_HEADER]: TOKEN }, body: runBody() })
+      expect(answer?.status).toBe(403)
     }
-    return Response.json({ ok: true, place: null })
-  }) as typeof fetch,
+    const fetched = await ask('/api/queue/run', { method: 'POST', headers: { 'sec-fetch-site': 'cross-site', 'content-type': 'application/json', [TOKEN_HEADER]: TOKEN }, body: runBody() })
+    expect(fetched?.status).toBe(403)
+    expect(q.list()).toHaveLength(0)
+  })
+  test('a program without the token, or with another', async () => {
+    for (const headers of [{}, { [TOKEN_HEADER]: 'B'.repeat(43) }] as Record<string, string>[]) {
+      const answer = await ask('/api/queue/run', { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: runBody() })
+      expect(answer?.status).toBe(403)
+      expect(((await answer!.json()) as { error: string }).error).toContain('token')
+    }
+    expect(q.list()).toHaveLength(0)
+  })
+  test('a body that is not JSON, or a command that is not an argv', async () => {
+    expect((await ask('/api/queue/run', { method: 'POST', headers: { 'content-type': 'text/plain', [TOKEN_HEADER]: TOKEN }, body: runBody() }))?.status).toBe(400)
+    expect((await ask('/api/queue/run', { method: 'POST', headers: { 'content-type': 'application/json', [TOKEN_HEADER]: TOKEN }, body: runBody({ argv: 'rm -rf /' }) }))?.status).toBe(400)
+    expect(q.list()).toHaveLength(0)
+  })
+  test('the agent door, POSTed from a page, is refused before the doors see it', async () => {
+    const answer = await ask('/mcp', { method: 'POST', headers: { origin: 'http://127.0.0.1:8110', 'content-type': 'application/json' }, body: '{}' })
+    expect(answer?.status).toBe(403)
+    expect(await ask('/mcp', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).toBeUndefined()
+  })
+})
+
+describe('the CLI door, for the program that has the token', () => {
+  test('queues, follows the output, and ends with the exit code', async () => {
+    const queued = await ask('/api/queue/run', { method: 'POST', headers: { 'content-type': 'application/json', [TOKEN_HEADER]: TOKEN }, body: runBody({ env: { PATH: process.env.PATH, GH_TOKEN: 'secret' } }) })
+    const body = (await queued!.json()) as { id: string; key: string; dropped: string[] }
+    expect(body.dropped).toEqual(['GH_TOKEN'])
+    const follow = await ask(`/api/queue/follow?id=${body.id}`, { headers: { [TOKEN_HEADER]: TOKEN } })
+    const lines = (await follow!.text()).trim().split('\n').map((line) => JSON.parse(line))
+    expect(lines.map((one) => one.out).filter(Boolean).join('')).toBe('hi\n')
+    expect(lines.at(-1).end).toMatchObject({ id: body.id, state: 'failed', exit: 3, kind: 'push', label: 'pre-push' })
+  })
+  test('cancels with the run\'s key, and only with it', async () => {
+    const queued = await ask('/api/queue/run', { method: 'POST', headers: { 'content-type': 'application/json', [TOKEN_HEADER]: TOKEN }, body: runBody({ argv: ['sh', '-c', 'sleep 5'] }) })
+    const { id, key } = (await queued!.json()) as { id: string; key: string }
+    const wrong = await ask('/api/queue/cancel', { method: 'POST', headers: { 'content-type': 'application/json', [TOKEN_HEADER]: TOKEN }, body: JSON.stringify({ id, key: 'nope' }) })
+    expect(wrong?.status).toBe(400)
+    const right = await ask('/api/queue/cancel', { method: 'POST', headers: { 'content-type': 'application/json', [TOKEN_HEADER]: TOKEN }, body: JSON.stringify({ id, key }) })
+    expect(right?.status).toBe(200)
+    expect(q.get(id)?.state).toBe('cancelled')
+  })
+})
+
+const call = async (name: string, args: Record<string, unknown>, query = '') => {
+  const reply = await mcp({ id: 1, method: 'tools/call', params: { name, arguments: args } }, new URLSearchParams(query), q)
+  const result = (reply.body as { result: { content: { text: string }[]; isError?: boolean } }).result
+  return { text: result.content[0]!.text, error: result.isError === true }
 }
 
-const none = new URLSearchParams()
+const PLACE = 'P'.repeat(32)
+const placeFetch = (async (url: string | URL | Request) => {
+  if (String(url).includes('/host/place')) {
+    return Response.json({ ok: true, place: { token: PLACE, conversation: 'abcdef123456', projectId: 'project-scratch-1', project: tmpdir(), projectName: 'Scratch', epic: 'queue', parts: [], kehikko: { key: 'k1', name: 'Wide' } } })
+  }
+  return new Response('no', { status: 404 })
+}) as typeof fetch
 
-async function rpc(method: string, params: Record<string, unknown> = {}) {
-  const reply = await answer('POST', '/mcp', none, { jsonrpc: '2.0', id: 1, method, params }, null)
-  return reply?.body as { result: { tools?: { name: string; annotations?: { readOnlyHint?: boolean }; inputSchema: { properties: object } }[]; content?: { text: string }[]; isError?: boolean } }
-}
-
-describe('the doors', () => {
-  test('the health check says which module this is', async () => {
-    const reply = await answer('GET', '/healthz', none, null, null)
-    expect((reply?.body as { id: string }).id).toBe(ID)
+describe('the MCP door', () => {
+  test('offers the four tools', () => {
+    expect(tools().map((one) => one.name)).toEqual(['queue_run', 'queue_status', 'queue_wait', 'queue_cancel'])
   })
-
-  test('a path that is not ours is left to Vite, and an unknown /api path is refused', async () => {
-    expect(await answer('GET', '/src/main.tsx', none, null, null)).toBeNull()
-    expect((await answer('GET', '/api/nothing', none, null, null))?.status).toBe(404)
+  test('queue_run takes the session and epic from its place; queue_wait answers the exit code and the output', async () => {
+    ASK.options = { fetch: placeFetch, env: { KEHIKOT_ORIGINS: 'http://127.0.0.1:9' } }
+    const ran = await call('queue_run', { command: ['sh', '-c', 'echo broken >&2; exit 2'], cwd: tmpdir(), kind: 'verify', label: 'unit', ref: '!3907' }, `kehikot-place=${PLACE}`)
+    expect(ran.error).toBe(false)
+    const id = /Queued (r[0-9a-z]+)/.exec(ran.text)![1]!
+    const run = q.get(id)!
+    expect(run.epic).toBe('queue')
+    expect(run.refs).toEqual(['!3907'])
+    expect(run.asker.said).toContain('Scratch › queue on "Wide"')
+    const waited = await call('queue_wait', { id, timeout_seconds: 10 })
+    expect(waited.text).toContain('failed, exit 2')
+    expect(waited.text).toContain('broken')
+    const status = await call('queue_status', {})
+    expect(status.text).toContain('Finished lately (1)')
   })
-
-  test('only this page writes: without its ticket a write is refused, with it the note is kept', async () => {
-    const body = { projectPath: project, op: 'add', text: 'Ask about the deadline', epic: 'launch', parts: ['design'] }
-    expect((await answer('POST', '/api/notes', none, body, null))?.status).toBe(403)
-    expect((await answer('POST', '/api/notes', none, body, 'not-the-ticket'))?.status).toBe(403)
-    expect((await answer('POST', '/api/notes', none, body, TICKET))?.status).toBe(200)
-    const read = await answer('GET', '/api/notes', new URLSearchParams({ projectPath: project }), null, null)
-    expect((read?.body as { notes: Note[] }).notes.map((note) => note.text)).toEqual(['Ask about the deadline'])
+  test('queue_cancel cancels only your own: by place, or by key', async () => {
+    ASK.options = { fetch: placeFetch, env: { KEHIKOT_ORIGINS: 'http://127.0.0.1:9' } }
+    const mine = await call('queue_run', { command: 'sleep 5', cwd: tmpdir() }, `kehikot-place=${PLACE}`)
+    const id = /Queued (r[0-9a-z]+)/.exec(mine.text)![1]!
+    expect((await call('queue_cancel', { id })).error).toBe(true)
+    expect((await call('queue_cancel', { id }, `kehikot-place=${'Q'.repeat(32)}`)).error).toBe(true)
+    expect((await call('queue_cancel', { id }, `kehikot-place=${PLACE}`)).text).toContain('Cancelled')
+    const other = await call('queue_run', { command: ['sh', '-c', 'sleep 5'], cwd: tmpdir() })
+    const [, otherId, key] = /Queued (r[0-9a-z]+) \(key ([A-Za-z0-9_-]+)\)/.exec(other.text)!
+    expect((await call('queue_cancel', { id: otherId, key: key! })).text).toContain('Cancelled')
   })
-
-  test('a malformed edit is refused with a sentence', async () => {
-    const reply = await answer('POST', '/api/notes', none, { projectPath: project, op: 'rename' }, TICKET)
-    expect(reply?.status).toBe(400)
+  test('refuses a run with nowhere to run, or a ref that is not one', async () => {
+    expect((await call('queue_run', { command: 'true' })).text).toContain('cwd')
+    expect((await call('queue_run', { command: 'true', cwd: tmpdir(), ref: 'not a ref' })).error).toBe(true)
+    expect((await call('queue_run', { command: [], cwd: tmpdir() })).error).toBe(true)
   })
-
-  test('the MCP door lists one read-only tool that takes project and epic', async () => {
-    expect((await answer('GET', '/mcp', none, null, null))?.status).toBe(405)
-    const tools = (await rpc('tools/list')).result.tools!
-    expect(tools.map((one) => one.name)).toEqual(['list_notes'])
-    for (const tool of tools) expect(tool.annotations?.readOnlyHint).toBe(true)
-    expect(Object.keys(tools[0]!.inputSchema.properties)).toEqual(['project', 'epic'])
+  test('an asker with no place says so', () => {
+    expect(mcpAsker(null, null).said).toBe('an agent session with no place')
   })
+})
 
-  test('list_notes answers for a project the host holds, and refuses one it does not', async () => {
-    const said = await rpc('tools/call', { name: 'list_notes', arguments: { project, epic: 'launch' } })
-    expect(said.result.isError).toBeUndefined()
-    expect(said.result.content?.[0]?.text).toContain('Ask about the deadline')
-    const refused = await rpc('tools/call', { name: 'list_notes', arguments: { project: '/not/a/project' } })
-    expect(refused.result.isError).toBe(true)
-    const unnamed = await rpc('tools/call', { name: 'list_notes', arguments: {} })
-    expect(unnamed.result.isError).toBe(true)
-  })
-
-  test('each skill is served at its path, with the origin filled in and a text a host accepts', async () => {
-    /* Said once the server listens: the manifest's versions follow the origin really bound. */
-    servingAt('http://127.0.0.1:9520')
-    for (const skill of MANIFEST.declares.skills ?? []) {
-      const reply = await answer('GET', skillPath(skill.name), none, null, null)
-      const text = reply?.raw?.bytes as string
-      expect(skillTextIssue(text, skill.name)).toBeNull()
-      expect(text).not.toContain('{{origin}}')
-      expect(text).toContain('http://127.0.0.1:9520')
-      expect(text).toContain(`[skill ${skill.version}]`)
-    }
-  })
-
-  test('the answer says each note as text, with its state and parts', () => {
-    const note: Note = { id: '1', text: 'Check <b>this</b>', epic: 'e', parts: ['p'], done: false, at: '2026-01-01T00:00:00Z' }
-    expect(saidNotes([note], 'e', [])).toBe('- [open] "Check <b>this</b>" (parts: p) — epic e')
-    expect(saidNotes([note], 'other', [])).toBe('No notes are kept for the epic other.')
+describe('the page\'s writes', () => {
+  test('cancel and move need the page\'s ticket', async () => {
+    const run = q.enqueue({ argv: ['sh', '-c', 'sleep 5'], cwd: tmpdir(), env: {}, kind: 'other', label: 'x', refs: [], epic: null, project: null, asker: { via: 'cli', said: 'a test', token: null, conversation: null } })
+    const refused = await answer('POST', '/api/act', new URLSearchParams(), { op: 'cancel', id: run.id }, null, q)
+    expect(refused?.status).toBe(403)
+    const done = await answer('POST', '/api/act', new URLSearchParams(), { op: 'cancel', id: run.id }, TICKET, q)
+    expect(done?.status).toBe(200)
+    expect(q.get(run.id)?.state).toBe('cancelled')
   })
 })
