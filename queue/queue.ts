@@ -99,6 +99,15 @@ export interface QueueOptions {
 
 const newId = () => `r${Date.now().toString(36)}${randomBytes(3).toString('hex')}`
 const newKey = () => randomBytes(18).toString('base64url')
+/** When a run's shell wrote its exit code: when it ended, for a run nobody was watching. */
+function endedAt(file: string): number | null {
+  try {
+    return Math.round(statSync(file).mtimeMs)
+  } catch {
+    return null
+  }
+}
+
 export const ended = (state: State) => state === 'passed' || state === 'failed' || state === 'cancelled'
 
 export class Queue {
@@ -145,7 +154,7 @@ export class Queue {
         Object.assign(run, { state: 'cancelled', finishedAt: now, why: 'The queue restarted before this run started. Ask for it again.' })
       } else if (run.state === 'running') {
         const code = exitOf(exitFile(exitDir(this.options.dir), run.id))
-        if (code !== null) this.#end(run, code, null, false)
+        if (code !== null) this.#end(run, code, null, false, endedAt(exitFile(exitDir(this.options.dir), run.id)))
         else if (run.pid === null || !alive(run.pid)) Object.assign(run, { state: 'failed', finishedAt: now, why: 'It stopped while the queue was away and left no exit code.' })
         /* Else: still running in its own group; `tick` looks for its exit file. */
       }
@@ -337,7 +346,7 @@ export class Queue {
       capLog(log, LOG_MOST * 4)
       /* A run picked up after a restart has no process handle: its exit file says when it ends. */
       const code = exitOf(exitFile(exitDir(dir), run.id))
-      if (code !== null) this.#end(run, code, null)
+      if (code !== null) this.#end(run, code, null, true, endedAt(exitFile(exitDir(dir), run.id)))
       else if (run.pid !== null && !alive(run.pid)) {
         const late = exitOf(exitFile(exitDir(dir), run.id))
         if (late !== null) this.#end(run, late, null)
@@ -383,11 +392,11 @@ export class Queue {
     }
   }
 
-  #end(run: Run, code: number | null, why: string | null, tell = true): void {
+  #end(run: Run, code: number | null, why: string | null, tell = true, at: number | null = null): void {
     run.state = code === 0 ? 'passed' : 'failed'
     run.exit = code
     run.why = why
-    run.finishedAt = this.#clock()
+    run.finishedAt = at ?? this.#clock()
     run.pid = run.pid ?? null
     capLog(logFile(logsDir(this.options.dir), run.id))
     if (tell) this.#changed(run)
