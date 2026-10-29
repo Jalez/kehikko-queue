@@ -1,10 +1,13 @@
-# Publish a release of this module when a vX.Y.Z tag is pushed. Kehikot installs
-# and updates modules from their releases. The steps are shared by every module
-# and live in Jalez/kehikko-desktop; see CLAUDE.md, "Releasing".
+# Release this module. A merge to main whose package.json version is newer
+# than the latest vX.Y.Z tag, with notes/<version>.md, is tagged and published
+# in the same run; nobody tags by hand. A vX.Y.Z tag pushed by the owner is
+# still released. The steps are shared by every module and live in
+# Jalez/kehikko-desktop (module-release.yml); see CLAUDE.md, "Releasing".
 name: release
 
 on:
   push:
+    branches: [main]
     tags: ["v*"]
   workflow_dispatch:
 
