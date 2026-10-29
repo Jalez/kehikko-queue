@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 
 import { Screen } from '../src/app.tsx'
 import type { Origin } from '../queue/origin.ts'
+import { streams } from './streams.ts'
 import type { Api, Overview } from '../src/wire/api.ts'
 import type { Host } from '../src/wire/use-kehikot.ts'
 import { aRun } from './inbox.test.ts'
@@ -32,6 +33,7 @@ function setup(runs: Overview['runs'], over: Partial<Host> = {}, answer: unknown
     ...over,
   }
   const api: Api = {
+    ...streams().api,
     runs: async () => ({ runs, machine }),
     output: async (id) => ({ text: `output of ${id}`, next: 10, size: 10 }),
     cancel: async () => ({ runs, machine }),
@@ -193,6 +195,7 @@ describe('the output drawer', () => {
     expect(written).toEqual(['output of f1'])
     cleanup()
     const cutApi: Api = {
+      ...streams().api,
       runs: async () => ({ runs, machine }),
       output: async () => ({ text: 'head\n… 99 bytes of output left out here …\ntail', next: 5, size: 5 }),
       cancel: async () => ({ runs, machine }),

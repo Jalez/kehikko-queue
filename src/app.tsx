@@ -28,10 +28,6 @@ export function App() {
   return <Screen host={host} items={items} onPress={press} />
 }
 
-/** How often the page reads the queue: often while something waits or runs, seldom otherwise. */
-export const BUSY_MS = 2000
-export const IDLE_MS = 15000
-
 export function Screen({
   host,
   api = realApi,
@@ -70,14 +66,9 @@ export function Screen({
     )
   }, [api])
 
-  const busy = !!overview?.runs.some((run) => run.state === 'queued' || run.state === 'running')
-  useEffect(() => {
-    read()
-    const timer = setInterval(() => {
-      if (typeof document === 'undefined' || document.visibilityState !== 'hidden') read()
-    }, busy ? BUSY_MS : IDLE_MS)
-    return () => clearInterval(timer)
-  }, [read, busy])
+  /* Read when the server says the queue changed, never on a clock; the stream says so once as it
+     opens, so this is also the first read, and again whenever the page is shown after being hidden. */
+  useEffect(() => api.changes(read), [api, read])
 
   /* The Inbox: every run of the last day, filed under its own project; a failure needs the person. */
   const { activity } = host
@@ -212,10 +203,14 @@ export function seconds(ms: number): string {
   return m < 60 ? `${m} min ${s % 60} s` : `${Math.floor(m / 60)} h ${m % 60} min`
 }
 
-/** One run: what it is, where it came from, how long it waited and ran. Its output is in the drawer. */
+/**
+ * One run: what it is, where it came from, how long it waited and ran. Its output is in the drawer.
+ * A run still waiting or running says since when rather than for how long: the page is redrawn when
+ * the queue changes, not on a clock, and a duration would stand still between changes.
+ */
 function RunRow({ run, now, jump, onOutput, children }: { run: RunView; now: number; jump: React.ReactNode; onOutput: () => void; children?: React.ReactNode }) {
-  const waited = (run.startedAt ?? (run.state === 'queued' ? now : run.finishedAt ?? now)) - run.queuedAt
-  const ran = run.startedAt === null ? null : (run.finishedAt ?? now) - run.startedAt
+  const waited = run.state === 'queued' ? `waiting since ${clock(run.queuedAt)}` : `waited ${seconds((run.startedAt ?? run.finishedAt ?? now) - run.queuedAt)}`
+  const ran = run.startedAt === null ? null : run.finishedAt === null ? `running since ${clock(run.startedAt)}` : `ran ${seconds(run.finishedAt - run.startedAt)}`
   return (
     <li className="rounded-md border px-2 py-1.5" data-run={run.id}>
       <div className="flex min-w-0 items-center gap-2">
@@ -232,8 +227,8 @@ function RunRow({ run, now, jump, onOutput, children }: { run: RunView; now: num
         {run.state === 'queued' && run.waiting ? `${run.waiting} ` : ''}
         From {run.asker.said}
         {run.epic ? ` · epic ${run.epic}` : ''}
-        {run.refs.length ? ` · for ${run.refs.join(', ')}` : ''} · waited {seconds(waited)}
-        {ran !== null ? ` · ran ${seconds(ran)}` : ''}
+        {run.refs.length ? ` · for ${run.refs.join(', ')}` : ''} · {waited}
+        {ran !== null ? ` · ${ran}` : ''}
         {run.why ? ` · ${run.why}` : ''}
       </p>
       {run.state !== 'queued' ? (
@@ -276,7 +271,8 @@ const clock = (ms: number | null) => (ms === null ? 'not yet' : new Date(ms).toL
 /** One run in the drawer: what it is, when, where from, and its output. One at a time. */
 function RunDrawer({ run, api, now, jump, jumpSaid }: { run: RunView; api: Api; now: number; jump: React.ReactNode; jumpSaid: string | null }) {
   const origin = originOf(run)
-  const ran = run.startedAt === null ? null : (run.finishedAt ?? now) - run.startedAt
+  /* Only once it has finished: while it runs, "started" above says since when (nothing redraws on a clock). */
+  const ran = run.startedAt === null || run.finishedAt === null ? null : run.finishedAt - run.startedAt
   return (
     <SheetContent aria-describedby="run-drawer-about" data-testid="drawer" data-run={run.id}>
       <SheetTitle>{run.label}</SheetTitle>
@@ -330,25 +326,41 @@ export function OutputOf({ run, api }: { run: RunView; api: Api }) {
   const live = run.state === 'running'
   useEffect(() => {
     let gone = false
-    const more = () =>
-      api.output(run.id, next.current).then(
+    /* One read at a time: news that arrives during a read asks for one more after it, so no byte is read twice. */
+    let reading = false
+    let again = false
+    const more = (): void => {
+      if (reading) {
+        again = true
+        return
+      }
+      reading = true
+      again = false
+      void api.output(run.id, next.current).then(
         (got) => {
-          if (gone || !got.text) return
-          next.current = got.next
-          setText((was) => {
-            const all = was + got.text
-            if (all.length > TEXT_MOST) setCut(true)
-            return all.slice(-TEXT_MOST)
-          })
-          if (got.next < got.size) void more()
+          reading = false
+          if (gone) return
+          if (got.text) {
+            next.current = got.next
+            setText((was) => {
+              const all = was + got.text
+              if (all.length > TEXT_MOST) setCut(true)
+              return all.slice(-TEXT_MOST)
+            })
+          }
+          if ((got.text && got.next < got.size) || again) more()
         },
-        () => {},
+        () => {
+          reading = false
+        },
       )
-    void more()
-    const timer = live ? setInterval(() => void more(), 1000) : null
+    }
+    /* While it runs, read as the server says its log grew (and once as that stream opens); a run that
+       has ended is read once. */
+    const stop = live ? api.outputChanges(run.id, more) : (more(), () => {})
     return () => {
       gone = true
-      if (timer) clearInterval(timer)
+      stop()
     }
   }, [api, run.id, live])
   useEffect(() => {

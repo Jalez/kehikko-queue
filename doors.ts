@@ -17,7 +17,9 @@ import { projectOf, publish } from './store.ts'
 import { argvOf, cwdOf, epicOf, kindOf, labelOf, refsOf } from './queue/asks.ts'
 import { runEnv } from './queue/env.ts'
 import { originFromCwd, originFromPlace } from './queue/origin-find.ts'
-import { cliToken, queueDir } from './queue/machine.ts'
+import { makeStream, runsChanged, waitingMoved } from './live.ts'
+import { logFile } from './queue/runner.ts'
+import { cliToken, logsDir, queueDir } from './queue/machine.ts'
 import { ended, Queue, type Asker, type Run, type RunView } from './queue/queue.ts'
 import { minutes, type Move } from './queue/schedule.ts'
 import { SETTINGS, capacityOf, cores, loadNow, readValues, writeValue } from './queue/settings.ts'
@@ -43,6 +45,15 @@ export const ASK: { options: HostHasProjectOptions } = { options: {} }
 /** Where the queue keeps its state. Read once: a process has one queue. */
 export const DIR = queueDir()
 
+/**
+ * How a queue tells the page (`live.ts`): every change of a run, and, after each look at the load,
+ * what the waiting runs say when it has moved. The page is told, never left to ask.
+ */
+export const toldOf = (get: () => Queue | null) => ({
+  changed: runsChanged,
+  ticked: () => waitingMoved(() => get()?.list().map((run) => run.waiting ?? '').join('\n') ?? ''),
+})
+
 /** The one queue of this process. Tests make their own with `new Queue`. */
 let held: Queue | null = null
 export function queue(): Queue {
@@ -55,10 +66,17 @@ export function queue(): Queue {
     publish: (project, runs) => {
       publish(project, runs)
     },
+    ...toldOf(() => held),
     tickMs: 5000,
   })
   return held
 }
+
+/** The page's streams: the queue, and one run's output (`live.ts`). In `vite.config.ts` and `serve.ts` both. */
+export const stream = makeStream(
+  (id) => (queue().get(id) ? logFile(logsDir(DIR), id) : null),
+  (id) => (queue().get(id)?.state === 'running' ? queue().output(id, 0, 0).size : null),
+)
 /** For tests: use this queue. */
 export function useQueue(one: Queue | null): void {
   held = one
