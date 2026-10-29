@@ -8,7 +8,7 @@ import { join } from 'node:path'
 
 import { DIR, mcp, stream, toldOf, useQueue } from '../doors.ts'
 import { Queue } from '../queue/queue.ts'
-import { NEWS, OUTPUT_EVENTS, RUNS_EVENTS, RUNS_TOPIC, forgetSaid, outputTopic, stopWatching, waitingMoved } from '../live.ts'
+import { NEWS, OUTPUT_EVENTS, RUNS_EVENTS, RUNS_TOPIC, forgetSaid, statTimers, stopWatching, useWatches, waitingMoved } from '../live.ts'
 
 /**
  * The server's side of "the page never polls": the streams, called as the doors call them, with an
@@ -103,59 +103,71 @@ describe('the queue stream', () => {
 })
 
 describe('a run’s output stream', () => {
-  test('opens with the news, and tells that run’s page when its log grows: seen by the file’s watch, or at the queue’s next look', async () => {
-    const ran = await call('queue_run', { command: ['sh', '-c', 'echo one; sleep 1.5; echo two; sleep 1.5'], cwd: tmpdir() })
+  test('the file’s watch tells of an append at once', async () => {
+    const ran = await call('queue_run', { command: ['sh', '-c', 'sleep 2'], cwd: tmpdir() })
     const id = /Queued (r[0-9a-z]+)/.exec(ran)![1]!
     const page = open(OUTPUT_EVENTS, `id=${id}`)
     const other = open(OUTPUT_EVENTS, 'id=r-someone-else')
     expect(page.heard).toEqual([NEWS])
-    expect(watching(outputTopic(id))).toBe(1)
     await settle(300)
     forgetSaid()
     const base = page.heard.length
-
-    /* Somebody appending to the log (open, write, close): the file's own watch tells. */
     appendFileSync(join(DIR, 'logs', `${id}.log`), 'a line\n')
     await settle()
     expect(page.heard.length).toBe(base + 1)
-
-    /* The run's own process writing "two" through the descriptor it holds, which Bun's watch is not
-       told of: the queue's next look (`tick`, every 5 s in the module) notices the log grew. */
-    queue().tick()
-    await settle(1700)
-    forgetSaid()
-    const before = page.heard.length
-    queue().tick()
-    await settle()
-    /* Exactly one piece of news for "two", however many events the file system sent. */
-    expect(page.heard.length).toBe(before + 1)
     expect(other.heard).toEqual([NEWS])
-
     page.close()
     other.close()
-    expect(watching(outputTopic(id))).toBe(0)
     await queue().wait(id, 5000)
   })
 
-  test('the queue’s look tells of a log that grew with no watch told, and nothing when it did not grow', async () => {
-    const ran = await call('queue_run', { command: ['sh', '-c', 'sleep 3'], cwd: tmpdir() })
+  test('where the watch is never told (Bun), the run’s own printing still arrives within a second, once', async () => {
+    useWatches(false)
+    try {
+      const ran = await call('queue_run', { command: ['sh', '-c', 'sleep 0.6; echo two; sleep 2.5'], cwd: tmpdir() })
+      const id = /Queued (r[0-9a-z]+)/.exec(ran)![1]!
+      const page = open(OUTPUT_EVENTS, `id=${id}`)
+      expect(page.heard).toEqual([NEWS])
+      const base = page.heard.length
+      /* "two" lands at 0.6 s; within about a second of it the page is told, with nothing asked by a page. */
+      await settle(600 + 1100)
+      expect(page.heard.length).toBe(base + 1)
+      /* Nothing more is printed: nothing more is said. */
+      await settle(1000)
+      expect(page.heard.length).toBe(base + 1)
+      page.close()
+      await queue().wait(id, 5000)
+    } finally {
+      useWatches(true)
+    }
+  })
+
+  test('no size look runs while nobody follows; it stops when the last stream closes, and when the run ends', async () => {
+    expect(statTimers()).toBe(0)
+    const ran = await call('queue_run', { command: ['sh', '-c', 'sleep 1'], cwd: tmpdir() })
     const id = /Queued (r[0-9a-z]+)/.exec(ran)![1]!
+    expect(statTimers()).toBe(0)
+
+    const one = open(OUTPUT_EVENTS, `id=${id}`)
+    const two = open(OUTPUT_EVENTS, `id=${id}`)
+    expect(statTimers()).toBe(1)
+    one.close()
+    expect(statTimers()).toBe(1)
+    two.close()
+    expect(statTimers()).toBe(0)
+
+    /* Followed until it ends: the look stops by itself. */
     const page = open(OUTPUT_EVENTS, `id=${id}`)
-    await settle(300)
-    forgetSaid()
-    stopWatching()
-    /* No watch at all now: only the look can tell. Following again, without a watch made. */
-    const again = open(OUTPUT_EVENTS, `id=${id}`)
-    stopWatching()
-    const followedAgain = open(OUTPUT_EVENTS, `id=${id}`)
-    const base = followedAgain.heard.length
-    queue().tick()
-    await settle()
-    expect(followedAgain.heard.length).toBe(base)
-    page.close()
-    again.close()
-    followedAgain.close()
+    expect(statTimers()).toBe(1)
     await queue().wait(id, 5000)
+    await settle(1000)
+    expect(statTimers()).toBe(0)
+    page.close()
+
+    /* A run that is not running (or not there) gets no look at all. */
+    const gone = open(OUTPUT_EVENTS, 'id=r-not-a-run')
+    expect(statTimers()).toBe(0)
+    gone.close()
   })
 
   test('another path, or no run, is not a stream', () => {

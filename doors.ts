@@ -17,7 +17,7 @@ import { projectOf, publish } from './store.ts'
 import { argvOf, cwdOf, epicOf, kindOf, labelOf, refsOf } from './queue/asks.ts'
 import { runEnv } from './queue/env.ts'
 import { originFromCwd, originFromPlace } from './queue/origin-find.ts'
-import { makeStream, outputsMoved, runsChanged, waitingMoved } from './live.ts'
+import { makeStream, runsChanged, waitingMoved } from './live.ts'
 import { logFile } from './queue/runner.ts'
 import { cliToken, logsDir, queueDir } from './queue/machine.ts'
 import { ended, Queue, type Asker, type Run, type RunView } from './queue/queue.ts'
@@ -51,10 +51,7 @@ export const DIR = queueDir()
  */
 export const toldOf = (get: () => Queue | null) => ({
   changed: runsChanged,
-  ticked: () => {
-    waitingMoved(() => get()?.list().map((run) => run.waiting ?? '').join('\n') ?? '')
-    outputsMoved((id) => (get()?.get(id)?.state === 'running' ? (get()?.output(id, 0, 0).size ?? null) : null))
-  },
+  ticked: () => waitingMoved(() => get()?.list().map((run) => run.waiting ?? '').join('\n') ?? ''),
 })
 
 /** The one queue of this process. Tests make their own with `new Queue`. */
@@ -76,7 +73,10 @@ export function queue(): Queue {
 }
 
 /** The page's streams: the queue, and one run's output (`live.ts`). In `vite.config.ts` and `serve.ts` both. */
-export const stream = makeStream((id) => (queue().get(id) ? logFile(logsDir(DIR), id) : null))
+export const stream = makeStream(
+  (id) => (queue().get(id) ? logFile(logsDir(DIR), id) : null),
+  (id) => (queue().get(id)?.state === 'running' ? queue().output(id, 0, 0).size : null),
+)
 /** For tests: use this queue. */
 export function useQueue(one: Queue | null): void {
   held = one
