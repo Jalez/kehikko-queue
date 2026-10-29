@@ -5,7 +5,7 @@ import react from '@vitejs/plugin-react'
 import { beforeDoors, doors, originFor, serves } from 'kehikot-module-protocol/serve'
 import { defineConfig, type Plugin } from 'vite'
 
-import { BUILD, MANIFEST, TICKET, answer, isOurs, queue, servingAt } from './doors.ts'
+import { BUILD, MANIFEST, TICKET, answer, isOurs, queue, servingAt, stream } from './doors.ts'
 import { QUEUE_DOOR } from './queue/door.ts'
 import { ID, PREFERRED_PORT } from './manifest.ts'
 
@@ -46,6 +46,7 @@ export default defineConfig({
     doors({
       manifest: MANIFEST,
       answer: (method, path, query, body, ticket) => answer(method, path, query, body, ticket),
+      stream,
       build: BUILD,
       page: { title: 'Test runs', ticket: TICKET },
       ours: isOurs,

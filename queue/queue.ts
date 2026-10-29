@@ -98,6 +98,8 @@ export interface QueueOptions {
   publish?(project: string, runs: RunResult[]): void
   /** Told whenever anything changed. */
   changed?(): void
+  /** Told after every look at the load and the runs (`tick`), changed or not: for what moves with the load. */
+  ticked?(): void
   /** How often the queue looks at the load and its runs, in ms. 0: only when asked (tests). */
   tickMs?: number
 }
@@ -364,6 +366,7 @@ export class Queue {
       if (decision.start === null) break
       this.#start(this.#runs.get(decision.start)!, decision.overdue)
     }
+    this.options.ticked?.()
   }
 
   #start(run: Run, overdue: boolean): void {
