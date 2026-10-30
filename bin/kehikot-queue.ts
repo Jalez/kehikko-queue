@@ -22,7 +22,7 @@
 import { spawn } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 const ID = 'kehikot.queue'
 const TOKEN_HEADER = 'x-kehikot-queue-token'
@@ -30,23 +30,34 @@ const SAY = (line: string) => process.stderr.write(`kehikot-queue: ${line}\n`)
 
 type Env = Record<string, string | undefined>
 
-/** The machine's Kehikot folder, as the host spells it. */
-export function machineDir(env: Env = process.env, platform = process.platform): string {
+/** The machine's Kehikot folder, as the host spells it: `Kehikot` on macOS, lowercase `kehikot` elsewhere. */
+export function machineDir(env: Env = process.env, platform: string = process.platform): string {
   const home = homedir() // kehikot-storage: allow the CLI reads the queue's machine folder and Kehikot's module registry
-  return platform === 'darwin' ? join(home, 'Library', 'Application Support', 'Kehikot') : join(env.XDG_DATA_HOME || join(home, '.local', 'share'), 'Kehikot')
+  return platform === 'darwin' ? join(home, 'Library', 'Application Support', 'Kehikot') : join(env.XDG_DATA_HOME || join(home, '.local', 'share'), 'kehikot')
 }
 
-export function where(env: Env = process.env): { url: string | null; token: string | null } {
-  const dir = machineDir(env)
-  const queueDir = env.KEHIKOT_QUEUE_DIR || join(dir, 'queue')
+/**
+ * The queue's own folder, for the server (`queue/machine.ts`) and this CLI alike. Off macOS, 0.4.0
+ * and earlier spelled the machine folder `Kehikot`; a queue folder kept there stays the queue's
+ * until a lowercase one exists, so its runs, settings and token carry on.
+ */
+export function queueDir(env: Env = process.env, platform: string = process.platform): string {
+  if (env.KEHIKOT_QUEUE_DIR) return env.KEHIKOT_QUEUE_DIR
+  const dir = join(machineDir(env, platform), 'queue')
+  if (platform === 'darwin' || existsSync(dir)) return dir
+  const before = join(dirname(machineDir(env, platform)), 'Kehikot', 'queue')
+  return existsSync(before) ? before : dir
+}
+
+export function where(env: Env = process.env, platform: string = process.platform): { url: string | null; token: string | null } {
   let token: string | null = null
   try {
-    token = readFileSync(join(queueDir, 'token'), 'utf8').trim() || null
+    token = readFileSync(join(queueDir(env, platform), 'token'), 'utf8').trim() || null
   } catch {
     /* No token: the queue never ran here. */
   }
   if (env.KEHIKOT_QUEUE_URL) return { url: env.KEHIKOT_QUEUE_URL.replace(/\/+$/, ''), token }
-  const registry = env.KEHIKOT_MODULES_DIR || join(dir, 'modules')
+  const registry = env.KEHIKOT_MODULES_DIR || join(machineDir(env, platform), 'modules')
   const file = join(registry, `${ID}.json`)
   if (!existsSync(file)) return { url: null, token }
   try {
