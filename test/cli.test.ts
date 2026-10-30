@@ -1,13 +1,13 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { beforeInfo } from 'kehikot-module-protocol/serve'
+import { beforeInfo, registryDir } from 'kehikot-module-protocol/serve'
 
-import { exitFor, parse } from '../bin/kehikot-queue.ts'
+import { exitFor, machineDir, parse, queueDir, where } from '../bin/kehikot-queue.ts'
 import { cliDoor } from '../queue/cli-door.ts'
-import { cliToken } from '../queue/machine.ts'
+import { cliToken, queueDir as serverQueueDir } from '../queue/machine.ts'
 import { Queue } from '../queue/queue.ts'
 
 /*
@@ -87,6 +87,58 @@ describe('through the queue', () => {
       ['sh -c exit 0', 'passed', true],
       ['pre-push', 'failed', true],
     ])
+  })
+})
+
+describe('where the CLI and the queue look for Kehikot\'s folder', () => {
+  test('off macOS it is spelled `kehikot`, as the host and the module registry spell it', () => {
+    const data = scratch()
+    expect(machineDir({ XDG_DATA_HOME: data }, 'linux')).toBe(join(data, 'kehikot'))
+    expect(machineDir({}, 'linux')).toBe(join(homedir(), '.local', 'share', 'kehikot'))
+    expect(machineDir({}, 'darwin')).toBe(join(homedir(), 'Library', 'Application Support', 'Kehikot'))
+  })
+  test('the registry it reads is the one the protocol writes registrations into', () => {
+    const env = { HOME: homedir(), XDG_DATA_HOME: scratch() }
+    expect(join(machineDir(env), 'modules')).toBe(registryDir(env))
+  })
+  test('on Linux it finds the queue registered in the lowercase folder', () => {
+    const data = scratch()
+    mkdirSync(join(data, 'kehikot', 'modules'), { recursive: true })
+    writeFileSync(join(data, 'kehikot', 'modules', 'kehikot.queue.json'), JSON.stringify({ url: 'http://127.0.0.1:7999' }))
+    const token = cliToken(join(data, 'kehikot', 'queue'))
+    expect(where({ XDG_DATA_HOME: data }, 'linux')).toEqual({ url: 'http://127.0.0.1:7999', token })
+  })
+  test('the CLI finds a queue registered where the protocol registers it on this computer', async () => {
+    const server = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      fetch: (request) => (new URL(request.url).pathname === '/healthz' ? Response.json({ ok: true, id: 'kehikot.queue' }) : Response.json({ runs: [] })),
+    })
+    cleanup.push(() => server.stop(true))
+    const env = { HOME: scratch(), XDG_DATA_HOME: scratch() }
+    mkdirSync(registryDir(env), { recursive: true })
+    writeFileSync(join(registryDir(env), 'kehikot.queue.json'), JSON.stringify({ url: `http://127.0.0.1:${server.port}` }))
+    const got = await cli(['status'], env)
+    expect(got.err).not.toContain('not running')
+    expect(got.out).toContain('Nothing queued')
+    expect(got.code).toBe(0)
+  })
+  test('a queue folder an earlier version made under `Kehikot` is still the queue\'s, until a lowercase one exists', () => {
+    const data = scratch()
+    expect(queueDir({ XDG_DATA_HOME: data }, 'linux')).toBe(join(data, 'kehikot', 'queue'))
+    const before = join(data, 'Kehikot', 'queue')
+    const token = cliToken(before)
+    expect(queueDir({ XDG_DATA_HOME: data }, 'linux')).toBe(before)
+    expect(serverQueueDir({ XDG_DATA_HOME: data }, 'linux')).toBe(before)
+    expect(where({ XDG_DATA_HOME: data }, 'linux').token).toBe(token)
+    mkdirSync(join(data, 'kehikot', 'queue'), { recursive: true })
+    expect(queueDir({ XDG_DATA_HOME: data }, 'linux')).toBe(join(data, 'kehikot', 'queue'))
+  })
+  test('the server keeps its queue where the CLI looks for it', () => {
+    const data = scratch()
+    expect(serverQueueDir({ XDG_DATA_HOME: data }, 'linux')).toBe(join(data, 'kehikot', 'queue'))
+    expect(serverQueueDir({ XDG_DATA_HOME: data }, 'darwin')).toBe(join(homedir(), 'Library', 'Application Support', 'Kehikot', 'queue'))
+    expect(serverQueueDir({ KEHIKOT_QUEUE_DIR: data }, 'linux')).toBe(data)
   })
 })
 

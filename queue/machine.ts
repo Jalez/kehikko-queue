@@ -1,6 +1,5 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
-import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 /**
@@ -8,22 +7,17 @@ import { join } from 'node:path'
  * on this computer), so the queue, the run logs, the settings and the CLI's token are kept in the
  * machine's Kehikot directory, never in a project:
  *
- *   ~/Library/Application Support/Kehikot/queue/     (macOS; ~/.local/share/Kehikot/queue elsewhere)
+ *   ~/Library/Application Support/Kehikot/queue/     (macOS; $XDG_DATA_HOME/kehikot/queue elsewhere)
  *     runs.json        the queue and the finished runs (no environment, ever)
  *     settings.json    capacity, from Kehikot's Settings › Modules
  *     token            the CLI's way in: 0600, readable only by this user
  *     logs/<id>.log    each run's output, capped, pruned after LOG_DAYS
  *     exit/<id>        each run's exit code, written by the run's own shell
  *
- * `KEHIKOT_QUEUE_DIR` puts it elsewhere (the tests, a scratch run).
+ * `KEHIKOT_QUEUE_DIR` puts it elsewhere (the tests, a scratch run). Spelled once, in the CLI, which
+ * imports nothing but node's own modules, so the server and the CLI cannot look in different places.
  */
-export function queueDir(env: Record<string, string | undefined> = process.env, platform: string = process.platform): string {
-  if (env.KEHIKOT_QUEUE_DIR) return env.KEHIKOT_QUEUE_DIR
-  const home = homedir() // kehikot-storage: allow the queue is machine-wide, kept in the machine's Kehikot directory
-  return platform === 'darwin'
-    ? join(home, 'Library', 'Application Support', 'Kehikot', 'queue')
-    : join(env.XDG_DATA_HOME || join(home, '.local', 'share'), 'Kehikot', 'queue')
-}
+export { queueDir } from '../bin/kehikot-queue.ts'
 
 export const logsDir = (dir: string) => join(dir, 'logs')
 export const exitDir = (dir: string) => join(dir, 'exit')

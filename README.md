@@ -91,7 +91,8 @@ This module runs commands, so its doors are strict. It never runs anything it wa
 - `<project>/.kehikot/queue/runs.json`: the project's runs as run results (the protocol's
   `runs.json`), with a `.gitignore` beside it. Written only into a folder that is already a Kehikot
   project.
-- `~/Library/Application Support/Kehikot/queue/` (`KEHIKOT_QUEUE_DIR` elsewhere), this computer's:
+- `~/Library/Application Support/Kehikot/queue/` on macOS, `$XDG_DATA_HOME/kehikot/queue/` (default
+  `~/.local/share/kehikot/queue/`) elsewhere, or `KEHIKOT_QUEUE_DIR`; this computer's:
   - `runs.json`: the queue and the finished runs, without environments.
   - `settings.json`: capacity.
   - `token`: the CLI's token.
