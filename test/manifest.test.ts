@@ -1,3 +1,4 @@
+import { absentSaysOf, agentSaysOf } from 'kehikot-module-protocol'
 import { describe, expect, test } from 'bun:test'
 import { CAPABILITY_NAMES, MODULE_ID, isSkillName, manifestSchema, moduleFolder } from 'kehikot-module-protocol'
 
@@ -43,5 +44,14 @@ describe('the manifest', () => {
 
   test('prefers a port on the ten-apart grid', () => {
     expect(PREFERRED_PORT % 10).toBe(0)
+  })
+})
+
+describe('what agent sessions are told (protocol 2.36.0)', () => {
+  test('where it is, when to use it; where it is not, not to run heavy suites directly', () => {
+    const parsed = manifestSchema.parse(DECLARED)
+    expect(agentSaysOf(parsed)).toContain('Queue heavy test runs here')
+    expect(absentSaysOf(parsed)).toBe("Don't start heavy test runs directly. If the person insists, suggest adding Test runs to this kehikko so runs don't collide.")
+    for (const line of [parsed.agentSays, parsed.absentSays]) expect(line!.length).toBeLessThanOrEqual(200)
   })
 })

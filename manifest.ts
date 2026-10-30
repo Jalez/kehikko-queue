@@ -46,6 +46,10 @@ export const DECLARED: Manifest = manifestSchema.parse({
     'This computer runs heavy test suites through Test runs, one queue for every session. Do not start a whole suite, a monorepo '
     + 'typecheck or a pre-push run directly: put it in the queue with `queue_run` (command, cwd, kind, label, ref) and wait for its '
     + 'result with `queue_wait` instead of polling the load. A failed run\'s answer has the end of its output.',
+  /* What every agent session is told about it (protocol 2.36.0): beside its name where it is on the
+     kehikko, and — for a session on a kehikko it is NOT on, while it is installed here — the second. */
+  agentSays: "Queue heavy test runs here (queue_run, then queue_wait) instead of running them in the shell, so sessions don't collide.",
+  absentSays: "Don't start heavy test runs directly. If the person insists, suggest adding Test runs to this kehikko so runs don't collide.",
   entry: '/app',
   /* What its content belongs to (protocol 2.29.0): one mode per scope, the default first. */
   modes: [
