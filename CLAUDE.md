@@ -15,7 +15,7 @@ what follows is how THIS repository is built, and the rules a change here keeps.
 | `queue/runner.ts` | Spawning in its own process group, the exit-file wrapper, logs (capped), cancel. |
 | `queue/cli-door.ts` | The CLI's door and the fence in front of `/mcp` (a `before`: it needs the headers). |
 | `queue/env.ts`, `queue/asks.ts` | What of a caller's environment a run gets; what a caller may ask. |
-| `queue/settings.ts`, `queue/machine.ts` | Capacity settings (Settings › Modules); the machine folder and the CLI token. |
+| `queue/settings.ts`, `queue/machine.ts` | Capacity settings (Settings › Modules); the CLI token. The machine folder is spelled in `bin/kehikot-queue.ts` (`machineDir`, `queueDir`), which imports only node's own modules; `queue/machine.ts` re-exports it. |
 | `doors.ts` | `/healthz`, `/mcp` (queue_run/status/wait/cancel), the page's `/api/*`, the settings door. |
 | `queue/origin.ts`, `queue/origin-find.ts` | Where a run came from (kept on the run, no environment) and what the jump-into button does with it (`view.goto`, with `project` and `show` since protocol 2.28.0; `declares.navigates`). |
 | `store.ts` | The only write into a project: run results, `.kehikot/queue/runs.json`. |
