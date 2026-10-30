@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -123,7 +123,17 @@ describe('where the CLI and the queue look for Kehikot\'s folder', () => {
     expect(got.out).toContain('Nothing queued')
     expect(got.code).toBe(0)
   })
-  test('a queue folder an earlier version made under `Kehikot` is still the queue\'s, until a lowercase one exists', () => {
+  /* The two spellings are two folders only where names are case-sensitive (Linux); on macOS they are one. */
+  const caseSensitive = (() => {
+    const dir = mkdtempSync(join(tmpdir(), 'queue-case-'))
+    try {
+      mkdirSync(join(dir, 'k'))
+      return !existsSync(join(dir, 'K'))
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })()
+  test.if(caseSensitive)('a queue folder an earlier version made under `Kehikot` is still the queue\'s, until a lowercase one exists', () => {
     const data = scratch()
     expect(queueDir({ XDG_DATA_HOME: data }, 'linux')).toBe(join(data, 'kehikot', 'queue'))
     const before = join(data, 'Kehikot', 'queue')
