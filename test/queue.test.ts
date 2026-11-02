@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -8,7 +8,7 @@ import { readRuns } from 'kehikot-module-protocol/serve'
 
 import { Queue, type Ask } from '../queue/queue.ts'
 import { runEnv } from '../queue/env.ts'
-import { publish } from '../store.ts'
+import { projectOf, publish } from '../store.ts'
 
 /*
  * The queue with real processes: harmless shell commands, a scratch folder, and a capacity the test
@@ -172,6 +172,45 @@ describe('publishing run results to the project', () => {
     const folder = scratch()
     expect(publish(folder, [])).toBeNull()
     expect(existsSync(join(folder, '.kehikot'))).toBe(false)
+  })
+})
+
+describe('the project a working folder belongs to', () => {
+  const git = (...args: string[]) => {
+    const done = Bun.spawnSync(['git', '-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...args])
+    if (done.exitCode !== 0) throw new Error(done.stderr.toString())
+  }
+  /* A home folder with a `.kehikot/` left from when it was once opened, and a project in a repository under it. */
+  const home = () => {
+    const root = realpathSync(scratch())
+    mkdirSync(join(root, '.kehikot'))
+    const project = join(root, 'workspace', 'proj')
+    mkdirSync(join(project, '.kehikot'), { recursive: true })
+    mkdirSync(join(project, 'packages', 'a'), { recursive: true })
+    git('init', '-q', project)
+    git('-C', project, 'commit', '-q', '--allow-empty', '-m', 'first')
+    return { root, project }
+  }
+
+  test('a worktree beside the project is the project\'s, not a stray .kehikot above both', () => {
+    const { root, project } = home()
+    const worktree = join(root, 'workspace', 'proj-wt', 'feature-x')
+    git('-C', project, 'worktree', 'add', '-q', '-b', 'feature-x', worktree)
+    mkdirSync(join(worktree, 'src'))
+    expect(projectOf(worktree)).toBe(project)
+    expect(projectOf(join(worktree, 'src'))).toBe(project)
+  })
+  test('a subfolder of a project is still in it, and so is a repository inside its folder', () => {
+    const { project } = home()
+    expect(projectOf(join(project, 'packages', 'a'))).toBe(project)
+    git('init', '-q', join(project, 'packages', 'a'))
+    expect(projectOf(join(project, 'packages', 'a'))).toBe(project)
+  })
+  test('a folder outside any repository still finds the nearest project above it', () => {
+    const { root } = home()
+    const folder = join(root, 'notes', 'today')
+    mkdirSync(folder, { recursive: true })
+    expect(projectOf(folder)).toBe(root)
   })
 })
 

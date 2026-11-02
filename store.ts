@@ -39,18 +39,27 @@ export function projectOf(cwd: string): string | null {
   } catch {
     return null
   }
-  /* Up the folders first: a subfolder of a project is in it. */
-  for (let at = real; ; at = dirname(at)) {
+  const asked = spawnSync('git', ['-C', real, 'rev-parse', '--path-format=absolute', '--show-toplevel', '--git-common-dir'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000 })
+  const [top, common] = asked.status === 0 ? (asked.stdout ?? '').trim().split('\n') : []
+  /* Up the folders, as far as the work tree's top: a subfolder of a project is in it. */
+  let at = real
+  for (; ; at = dirname(at)) {
     if (isProject(at)) return at
-    if (dirname(at) === at) break
+    if (at === top || dirname(at) === at) break
   }
-  /* A worktree elsewhere: its main checkout, by the repository's common folder. */
-  const asked = spawnSync('git', ['-C', real, 'rev-parse', '--path-format=absolute', '--git-common-dir'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000 })
-  if (asked.status !== 0) return null
-  const common = (asked.stdout ?? '').trim()
-  if (!common.endsWith('/.git')) return null
-  const main = dirname(common)
-  return isProject(main) ? main : null
+  /*
+   * A worktree elsewhere: its main checkout, by the repository's common folder. Asked before the
+   * folders above the work tree, where a `.kehikot/` left in a home folder once opened in Kehikot
+   * would otherwise take the runs of every worktree under it.
+   */
+  const main = common?.endsWith('/.git') ? dirname(common) : null
+  if (isProject(main)) return main
+  /* The rest of the way up: a repository inside a project's folder (a submodule, a clone) is in it. */
+  while (dirname(at) !== at) {
+    at = dirname(at)
+    if (isProject(at)) return at
+  }
+  return null
 }
 
 /** Publish one project's runs, whole. Never throws: a project that cannot be written is said, not fatal. */
