@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, existsSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, existsSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -211,6 +211,22 @@ describe('the project a working folder belongs to', () => {
     const folder = join(root, 'notes', 'today')
     mkdirSync(folder, { recursive: true })
     expect(projectOf(folder)).toBe(root)
+  })
+  test('a project found inside the work tree is answered without asking git; a failing git keeps the old answer', () => {
+    const { root, project } = home()
+    const other = join(root, 'workspace', 'other')
+    git('init', '-q', other)
+    const bin = join(root, 'bin')
+    const asked = join(root, 'git-asked')
+    mkdirSync(bin)
+    writeFileSync(join(bin, 'git'), `#!/bin/sh\necho "$*" >> '${asked}'\nexit 1\n`, { mode: 0o755 })
+    /* A child process, because Bun looks commands up on the PATH it started with. */
+    const child = Bun.spawnSync([process.execPath, '-e', `import { projectOf } from ${JSON.stringify(join(import.meta.dir, '..', 'store.ts'))}; console.log(JSON.stringify(JSON.parse(process.env.FOLDERS).map(projectOf)))`], {
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, FOLDERS: JSON.stringify([join(project, 'packages', 'a'), other]) },
+    })
+    expect(child.exitCode).toBe(0)
+    expect(JSON.parse(child.stdout.toString())).toEqual([project, root])
+    expect(readFileSync(asked, 'utf8').trim().split('\n')).toHaveLength(1)
   })
 })
 
