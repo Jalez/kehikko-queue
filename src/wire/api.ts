@@ -27,6 +27,8 @@ export interface Api {
   output(id: string, from: number): Promise<Output>
   cancel(id: string): Promise<Overview>
   move(id: string, to: 'up' | 'down' | 'top'): Promise<Overview>
+  /** The person was shown this failed run: it stops asking for them. */
+  seen(id: string): Promise<Overview>
   /**
    * Hear when the queue changed: once as the stream opens (and again each time it reopens — after a
    * drop, or when the page is shown again), then at every change. Never on a clock; closed while the
@@ -51,6 +53,9 @@ export const api: Api = {
   outputChanges: (id, onChange) => subscribe('./api/output/events', () => onChange(), { query: { id }, probe: true }),
   async cancel(id) {
     return overview(answered(await ask<{ runs?: RunView[]; machine?: Machine }>('./api/act', { body: { op: 'cancel', id } })))
+  },
+  async seen(id) {
+    return overview(answered(await ask<{ runs?: RunView[]; machine?: Machine }>('./api/act', { body: { op: 'seen', id } })))
   },
   async move(id, to) {
     return overview(answered(await ask<{ runs?: RunView[]; machine?: Machine }>('./api/act', { body: { op: 'move', id, to } })))

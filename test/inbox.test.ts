@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { inboxItems } from '../src/inbox.ts'
+import { inboxItems, itemIdOf, runIdOf } from '../src/inbox.ts'
 import type { RunView } from '../queue/queue.ts'
 
 export function aRun(over: Partial<RunView> = {}): RunView {
@@ -35,13 +35,35 @@ describe('the Inbox', () => {
   test('a failure needs the person; a pass is done; a waiting or running run is working', () => {
     const items = inboxItems([aRun(), aRun({ id: 'r2', state: 'passed', exit: 0 }), aRun({ id: 'r3', state: 'running', finishedAt: null, exit: null }), aRun({ id: 'r4', state: 'queued', startedAt: null, finishedAt: null, exit: null })], 4000)
     expect(items.map((one) => [one.id, one.state, one.label])).toEqual([
-      ['run:r1', 'attention', 'Tests failed: pre-push monorepo (exit 3)'],
-      ['run:r2', 'done', 'Tests passed: pre-push monorepo'],
-      ['run:r3', 'working', 'Tests running: pre-push monorepo'],
-      ['run:r4', 'working', 'Tests waiting: pre-push monorepo'],
+      ['run:r1', 'attention', 'Tests failed: pre-push monorepo in p (exit 3)'],
+      ['run:r2', 'done', 'Tests passed: pre-push monorepo in p'],
+      ['run:r3', 'working', 'Tests running: pre-push monorepo in p'],
+      ['run:r4', 'working', 'Tests waiting: pre-push monorepo in p'],
     ])
     expect(items[0]).toMatchObject({ project: '/p', place: { epic: 'queue' }, refs: ['!3907'], priority: 'normal' })
     expect(items[0]!.detail).toContain('pre-push hook')
+  })
+  test('a failure says which run it is: its label, where it ran, who started it, and the epic it came from', () => {
+    const origin = { project: '/p', projectId: 'pid', projectName: 'P', epic: 'auth', parts: ['login'], kehikko: 'k-wide', kehikkoName: 'Wide', session: 's1', branch: 'fix/login' }
+    const [item] = inboxItems([aRun({ cwd: '/p-worktrees/fix-login', origin, asker: { via: 'mcp', said: 'an agent session (bd462ecd) in P › auth on "Wide".', token: null, conversation: null } })], 4000)
+    expect(item!.label).toBe('Tests failed: pre-push monorepo on fix/login (exit 3)')
+    expect(item!.detail).toBe('Started by an agent session (bd462ecd) in P › auth on "Wide". Ran in /p-worktrees/fix-login on branch fix/login. Open it to see its output in Test runs.')
+    /* Not the kehikko it was asked from: that one may have no Test runs, and opening the item has to show the run. */
+    expect(item!.place).toEqual({ epic: 'auth', parts: ['login'] })
+  })
+  test('a place the protocol would refuse falls back to the epic, never failing the list', () => {
+    const origin = { project: '/p', projectId: null, projectName: null, epic: 'auth', parts: ['Not A Slug'], kehikko: null, kehikkoName: null, session: null, branch: null }
+    expect(inboxItems([aRun({ origin })], 4000)[0]!.place).toEqual({ epic: 'auth' })
+  })
+  test('a failure the person has been shown leaves the Inbox; one not yet shown stays', () => {
+    const items = inboxItems([aRun({ id: 'seen', seenAt: 3500 }), aRun({ id: 'not' })], 4000)
+    expect(items.map((one) => one.id)).toEqual(['run:not'])
+  })
+  test('item ids and run ids go both ways', () => {
+    expect(itemIdOf('r1')).toBe('run:r1')
+    expect(runIdOf('run:r1')).toBe('r1')
+    expect(runIdOf('run:')).toBeNull()
+    expect(runIdOf('other')).toBeNull()
   })
   test('a run from no project, or older than a day, is not in it', () => {
     expect(inboxItems([aRun({ project: null }), aRun({ id: 'old', finishedAt: 0 })], 2 * 86_400_000)).toEqual([])

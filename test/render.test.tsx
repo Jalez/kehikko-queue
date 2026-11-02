@@ -40,6 +40,10 @@ function fakeApi(runs: Overview['runs']) {
       said.push(`move ${id} ${to}`)
       return { runs, machine }
     },
+    seen: async (id) => {
+      said.push(`seen ${id}`)
+      return { runs, machine }
+    },
   }
   return { api, said }
 }
@@ -126,6 +130,7 @@ describe('the page is told, never asks on a clock', () => {
       },
       cancel: async () => ({ runs, machine }),
       move: async () => ({ runs, machine }),
+      seen: async () => ({ runs, machine }),
     }
     const realInterval = globalThis.setInterval
     let intervals = 0
@@ -161,6 +166,76 @@ describe('the page is told, never asks on a clock', () => {
       expect(told.open.output.get('u1')?.length ?? 0).toBe(0)
     } finally {
       globalThis.setInterval = realInterval
+    }
+  })
+})
+
+describe('a failure that needs the person', () => {
+  test('has a border AND the words, until its output is opened; then it is told seen once', async () => {
+    const runs = [aRun({ id: 'f1', label: 'unit' }), aRun({ id: 'f2', label: 'old', seenAt: 4000 }), aRun({ id: 'p1', state: 'passed', exit: 0, label: 'lint' })]
+    const { api, said } = fakeApi(runs)
+    render(<Screen host={host()} api={api} now={() => 5000} />)
+    await settle()
+    const row = (id: string) => document.querySelector(`li[data-run="${id}"]`) as HTMLElement
+    expect(row('f1').dataset.needs).toBe('true')
+    expect(row('f1').className).toContain('border-attention')
+    expect(row('f1').textContent).toContain('Needs your attention')
+    /* Seen before, and a pass: no border, no words. */
+    for (const id of ['f2', 'p1']) {
+      expect(row(id).dataset.needs).toBeUndefined()
+      expect(row(id).className).not.toContain('border-attention')
+      expect(row(id).textContent).not.toContain('Needs your attention')
+    }
+    expect(screen.getAllByTestId('needs')).toHaveLength(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Output of “unit”' }))
+    await settle()
+    expect(said).toEqual(['seen f1'])
+    /* Opening a run already seen, or a pass, tells nothing. */
+    fireEvent.keyDown(screen.getByTestId('drawer'), { key: 'Escape' })
+    await settle()
+    fireEvent.click(screen.getByRole('button', { name: 'Output of “lint”' }))
+    await settle()
+    expect(said).toEqual(['seen f1'])
+  })
+
+  test('the border goes once the queue says the run was seen', async () => {
+    let runs = [aRun({ id: 'f1', label: 'unit' })]
+    const told = streams()
+    const api: Api = { ...told.api, runs: async () => ({ runs, machine }), output: async () => ({ text: '', next: 0, size: 0 }), cancel: async () => ({ runs, machine }), move: async () => ({ runs, machine }), seen: async () => ({ runs, machine }) }
+    render(<Screen host={host()} api={api} now={() => 5000} />)
+    await settle()
+    expect(screen.queryAllByTestId('needs')).toHaveLength(1)
+    runs = [aRun({ id: 'f1', label: 'unit', seenAt: 4500 })]
+    told.tell()
+    await settle()
+    expect(screen.queryAllByTestId('needs')).toHaveLength(0)
+    expect((document.querySelector('li[data-run="f1"]') as HTMLElement).className).not.toContain('border-attention')
+  })
+
+  test('opened from the Inbox: that run is highlighted, scrolled to and its output opened, and it is told seen', async () => {
+    const runs = [aRun({ id: 'f1', label: 'unit' }), aRun({ id: 'f2', label: 'other' })]
+    const { api, said } = fakeApi(runs)
+    const scrolled: string[] = []
+    const real = HTMLElement.prototype.scrollIntoView
+    HTMLElement.prototype.scrollIntoView = function (this: HTMLElement) {
+      scrolled.push(this.dataset.run ?? '')
+    }
+    try {
+      const { rerender } = render(<Screen host={host()} api={api} now={() => 5000} openedItem={{ item: 'run:f2', n: 1 }} />)
+      await settle()
+      expect((document.querySelector('li[data-run="f2"]') as HTMLElement).dataset.focused).toBe('true')
+      expect((document.querySelector('li[data-run="f1"]') as HTMLElement).dataset.focused).toBeUndefined()
+      expect(scrolled).toEqual(['f2'])
+      expect(screen.getByTestId('drawer').getAttribute('data-run')).toBe('f2')
+      expect(said).toEqual(['seen f2'])
+      /* The same open again is not handled twice; an item of a run that has gone is ignored. */
+      rerender(<Screen host={host()} api={api} now={() => 5000} openedItem={{ item: 'run:f2', n: 1 }} />)
+      rerender(<Screen host={host()} api={api} now={() => 5000} openedItem={{ item: 'run:gone', n: 2 }} />)
+      await settle()
+      expect(scrolled).toEqual(['f2'])
+      expect(said).toEqual(['seen f2'])
+    } finally {
+      HTMLElement.prototype.scrollIntoView = real
     }
   })
 })
