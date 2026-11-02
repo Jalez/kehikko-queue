@@ -391,7 +391,11 @@ export async function answer(
       const no = q.move(id, body.to as Move)
       return no ? bad(no) : ok(overview(q))
     }
-    return bad('An act is cancel (id) or move (id, to: up, down or top).')
+    if (body?.op === 'seen') {
+      const no = q.seen(id)
+      return no ? bad(no) : ok(overview(q))
+    }
+    return bad('An act is cancel (id), move (id, to: up, down or top) or seen (id).')
   }
 
   if (path.startsWith('/api/')) return bad('Not here.', 404)

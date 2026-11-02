@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, Check, ChevronsUp, CircleCheck, CircleDashed, CircleSlash, CircleX, Copy, LoaderCircle, SquareArrowOutUpRight, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, BellRing, Check, ChevronsUp, CircleCheck, CircleDashed, CircleSlash, CircleX, Copy, LoaderCircle, SquareArrowOutUpRight, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { navigationResult, type HeaderItem, type PressValue } from 'kehikot-module-protocol'
@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet'
 import { headerItems, pressed, showingOf, type Showing } from '@/header'
-import { inboxItems } from '@/inbox'
+import { inboxItems, needsThePerson, runIdOf } from '@/inbox'
 import { api as realApi, type Api, type Overview } from '@/wire/api'
 import { useKehikot, type Host } from '@/wire/use-kehikot'
 
@@ -18,14 +18,19 @@ import type { RunView } from '../queue/queue.ts'
 
 type Press = { item: string; value?: PressValue }
 
+/** An Inbox item the person opened (`kehikot.opened`, protocol 2.35.0); `n` tells two opens of one item apart. */
+export type OpenedItem = { item: string; n: number }
+
 /** The page: the queue as last read, at the container's scope (protocol 2.29.0). */
 export function App() {
   const press = useCallback(({ item, value }: Press) => pressed(item, value), [])
-  const host = useKehikot({ onPress: press })
+  const [openedItem, setOpenedItem] = useState<OpenedItem | null>(null)
+  const onOpened = useCallback(({ item }: { item: string }) => setOpenedItem((was) => ({ item, n: (was?.n ?? 0) + 1 })), [])
+  const host = useKehikot({ onPress: press, onOpened })
   const items = useMemo(() => headerItems(), [])
   const { header } = host
   useEffect(() => header(items), [header, items])
-  return <Screen host={host} items={items} onPress={press} />
+  return <Screen host={host} items={items} onPress={press} openedItem={openedItem} />
 }
 
 export function Screen({
@@ -35,6 +40,7 @@ export function Screen({
   showing: asked,
   onPress = () => {},
   now = () => Date.now(),
+  openedItem = null,
 }: {
   host: Host
   api?: Api
@@ -42,6 +48,8 @@ export function Screen({
   showing?: Showing
   onPress?: (press: Press) => void
   now?: () => number
+  /** The Inbox item the person last opened: its run is shown, scrolled to and opened. */
+  openedItem?: OpenedItem | null
 }) {
   const server = useServerStanding()
   /* Every project's runs at This computer (the default), the open project's at Project: the scope, said by the host. */
@@ -92,6 +100,32 @@ export function Screen({
 
   /* The drawer's run is looked up by id in the whole queue, so it stays open while the list narrows or changes. */
   const opened = open ? overview?.runs.find((run) => run.id === open) : undefined
+
+  /* The run of the Inbox item the person opened: highlighted, scrolled to, its output opened. Waits
+     for the queue's first read; an item whose run has gone is ignored. Each open is handled once. */
+  const [focused, setFocused] = useState<string | null>(null)
+  const handled = useRef(0)
+  useEffect(() => {
+    if (!openedItem || !overview || handled.current === openedItem.n) return
+    handled.current = openedItem.n
+    const id = runIdOf(openedItem.item)
+    if (!id || !overview.runs.some((run) => run.id === id)) return
+    setFocused(id)
+    setOpen(id)
+  }, [openedItem, overview])
+  useEffect(() => {
+    if (!focused) return
+    const row = [...document.querySelectorAll<HTMLElement>('li[data-run]')].find((one) => one.dataset.run === focused)
+    if (row && typeof row.scrollIntoView === 'function') row.scrollIntoView({ block: 'nearest' })
+  }, [focused])
+
+  /* A failure whose output is open has been shown to the person: it stops asking for them. Told once per run. */
+  const told = useRef(new Set<string>())
+  useEffect(() => {
+    if (!opened || !needsThePerson(opened) || told.current.has(opened.id)) return
+    told.current.add(opened.id)
+    void act(api.seen(opened.id))
+  }, [opened, api])
   const waiting = runs.filter((run) => run.state === 'queued')
   const running = runs.filter((run) => run.state === 'running')
   const finished = runs.filter((run) => run.state !== 'queued' && run.state !== 'running')
@@ -127,7 +161,7 @@ export function Screen({
             ) : null}
             <Group title="Waiting" runs={waiting}>
               {(run, at) => (
-                <RunRow key={run.id} run={run} now={now()} jump={jump(run)} onOutput={() => setOpen(run.id)}>
+                <RunRow key={run.id} run={run} now={now()} jump={jump(run)} focused={focused === run.id} onOutput={() => setOpen(run.id)}>
                   <Button variant="ghost" size="sm" className="size-6 p-0" aria-label={`Move “${run.label}” to the top`} disabled={at === 0} onClick={() => void act(api.move(run.id, 'top'))}>
                     <ChevronsUp className="size-3" />
                   </Button>
@@ -143,13 +177,13 @@ export function Screen({
             </Group>
             <Group title="Running" runs={running}>
               {(run) => (
-                <RunRow key={run.id} run={run} now={now()} jump={jump(run)} onOutput={() => setOpen(run.id)}>
+                <RunRow key={run.id} run={run} now={now()} jump={jump(run)} focused={focused === run.id} onOutput={() => setOpen(run.id)}>
                   <Cancel run={run} onCancel={() => void act(api.cancel(run.id))} />
                 </RunRow>
               )}
             </Group>
             <Group title="Finished" runs={finished}>
-              {(run) => <RunRow key={run.id} run={run} now={now()} jump={jump(run)} onOutput={() => setOpen(run.id)} />}
+              {(run) => <RunRow key={run.id} run={run} now={now()} jump={jump(run)} focused={focused === run.id} onOutput={() => setOpen(run.id)} />}
             </Group>
           </>
         )}
@@ -208,11 +242,25 @@ export function seconds(ms: number): string {
  * A run still waiting or running says since when rather than for how long: the page is redrawn when
  * the queue changes, not on a clock, and a duration would stand still between changes.
  */
-function RunRow({ run, now, jump, onOutput, children }: { run: RunView; now: number; jump: React.ReactNode; onOutput: () => void; children?: React.ReactNode }) {
+function RunRow({ run, now, jump, focused = false, onOutput, children }: { run: RunView; now: number; jump: React.ReactNode; focused?: boolean; onOutput: () => void; children?: React.ReactNode }) {
+  /* A failure not yet shown to the person: a border in the attention colour AND the words, never colour alone.
+     It is a border, not an outline, so a focus outline inside the row stays its own. */
+  const needs = needsThePerson(run)
   const waited = run.state === 'queued' ? `waiting since ${clock(run.queuedAt)}` : `waited ${seconds((run.startedAt ?? run.finishedAt ?? now) - run.queuedAt)}`
   const ran = run.startedAt === null ? null : run.finishedAt === null ? `running since ${clock(run.startedAt)}` : `ran ${seconds(run.finishedAt - run.startedAt)}`
   return (
-    <li className="rounded-md border px-2 py-1.5" data-run={run.id}>
+    <li
+      className={`rounded-md px-2 py-1.5 ${needs ? 'border-attention border-2' : 'border'} ${focused ? 'bg-accent' : ''}`}
+      data-run={run.id}
+      data-needs={needs ? 'true' : undefined}
+      data-focused={focused ? 'true' : undefined}
+    >
+      {needs ? (
+        <p className="text-attention-foreground mb-0.5 inline-flex items-center gap-1 text-[11px] font-medium" data-testid="needs">
+          <BellRing className="size-3" aria-hidden />
+          Needs your attention
+        </p>
+      ) : null}
       <div className="flex min-w-0 items-center gap-2">
         <StateMark run={run} />
         {/* A label is the asker's words: text, never markup. */}

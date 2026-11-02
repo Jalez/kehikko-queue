@@ -83,6 +83,12 @@ export interface Run {
   pid: number | null
   /** Whether it started past the load guard, having waited its longest. */
   overdue: boolean
+  /**
+   * When a failed run was shown to the person — opened from the Inbox, or its output opened on the
+   * page — after which it no longer asks for them. Null or absent: not yet (and every run kept before
+   * this was recorded).
+   */
+  seenAt?: number | null
 }
 
 /** A run as anyone may see it: no key, no environment. */
@@ -237,6 +243,7 @@ export class Queue {
       exit: null,
       pid: null,
       overdue: false,
+      seenAt: null,
     }
     this.#runs.set(run.id, run)
     this.#env.set(run.id, ask.env)
@@ -273,6 +280,20 @@ export class Queue {
     if (!next) return to === 'down' ? 'It is already last.' : 'It is already first.'
     run.pri = next.pri
     run.rank = next.rank
+    this.#changed(run)
+    return null
+  }
+
+  /**
+   * The person was shown a failed run: opened from the Inbox, or its output opened. It stops asking
+   * for them; the run stays in the list. Null when marked (or already marked, or not a failure: there
+   * is nothing to see then); a sentence when there is no such run.
+   */
+  seen(id: string): string | null {
+    const run = this.#runs.get(id)
+    if (!run) return 'There is no such run.'
+    if (run.state !== 'failed' || run.seenAt) return null
+    run.seenAt = this.#clock()
     this.#changed(run)
     return null
   }

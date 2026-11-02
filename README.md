@@ -14,8 +14,11 @@ waits in Test runs and starts when there is room; whoever asked waits for its ow
   and cancel any run, on the page.
 - **What you see.** Waiting, running and finished runs, each with the session and epic it came from,
   the change or issue it is for, how long it waited and ran, and its result. A failed run opens its output.
-- **The Inbox.** Every run of the last day is in Kehikot's Inbox under its project: a failure needs
-  you, a pass is done.
+- **The Inbox.** Every run of the last day is in Kehikot's Inbox under its project and the place it
+  was asked from: a failure needs you, a pass is done. A failure says which run it is (its label,
+  branch or folder, and who started it). Opening it from the Inbox shows that run here, with its
+  output open; once you have seen it (from the Inbox, or by opening its output) it leaves the Inbox
+  and stays in the list. Until then its row has an outlined border and says "Needs your attention".
 - **Run results for other modules.** Each project's runs are published as the protocol's run results
   (2.27.0), so a module showing a change can show whether its tests pass, without either naming the other.
 - **Pass or fail is the command's own.** The command runs as given, in the folder it was asked in,

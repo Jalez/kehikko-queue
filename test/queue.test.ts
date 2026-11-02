@@ -185,3 +185,30 @@ describe('the environment a run gets', () => {
   })
 })
 
+describe('a failure shown to the person', () => {
+  test('is marked seen once, keeps its place in the list, and is kept across a restart', async () => {
+    const dir = scratch()
+    let now = 1_000
+    const q = queue({ dir, clock: () => now })
+    const run = q.enqueue(ask(['sh', '-c', 'exit 2']))
+    await q.wait(run.id, 10_000)
+    expect(q.get(run.id)?.seenAt ?? null).toBeNull()
+    now = 5_000
+    expect(q.seen(run.id)).toBeNull()
+    expect(q.get(run.id)?.seenAt).toBe(5_000)
+    now = 9_000
+    expect(q.seen(run.id)).toBeNull()
+    expect(q.get(run.id)?.seenAt).toBe(5_000)
+    expect(q.list().map((one) => one.id)).toContain(run.id)
+    q.stop()
+    expect(queue({ dir, clock: () => now }).get(run.id)?.seenAt).toBe(5_000)
+  })
+  test('a run that did not fail has nothing to see, and an unknown run is said', async () => {
+    const q = queue()
+    const run = q.enqueue(ask(['sh', '-c', 'exit 0']))
+    await q.wait(run.id, 10_000)
+    expect(q.seen(run.id)).toBeNull()
+    expect(q.get(run.id)?.seenAt ?? null).toBeNull()
+    expect(q.seen('nope')).toBe('There is no such run.')
+  })
+})

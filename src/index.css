@@ -28,6 +28,9 @@
   --border: oklch(0.9 0 0);
   --input: oklch(0.87 0 0);
   --ring: oklch(0.65 0 0);
+  /* A run that still needs the person: amber, distinct from the focus ring and from "failed" red. */
+  --attention: oklch(0.72 0.17 65);
+  --attention-foreground: oklch(0.47 0.12 60);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -50,6 +53,8 @@
     --border: oklch(0.26 0 0);
     --input: oklch(0.28 0 0);
     --ring: oklch(0.5 0 0);
+    --attention: oklch(0.78 0.15 75);
+    --attention-foreground: oklch(0.84 0.13 80);
   }
 }
 
@@ -72,6 +77,8 @@
   --border: oklch(0.26 0 0);
   --input: oklch(0.28 0 0);
   --ring: oklch(0.5 0 0);
+  --attention: oklch(0.78 0.15 75);
+  --attention-foreground: oklch(0.84 0.13 80);
 }
 
 @theme inline {
@@ -97,6 +104,8 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-attention: var(--attention);
+  --color-attention-foreground: var(--attention-foreground);
 }
 
 @layer base {
