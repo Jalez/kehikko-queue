@@ -39,21 +39,24 @@ export function projectOf(cwd: string): string | null {
   } catch {
     return null
   }
-  const asked = spawnSync('git', ['-C', real, 'rev-parse', '--path-format=absolute', '--show-toplevel', '--git-common-dir'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000 })
-  const [top, common] = asked.status === 0 ? (asked.stdout ?? '').trim().split('\n') : []
-  /* Up the folders, as far as the work tree's top: a subfolder of a project is in it. */
+  /* Up the folders, as far as the first that holds a repository: a subfolder of a project is in it. */
   let at = real
   for (; ; at = dirname(at)) {
     if (isProject(at)) return at
-    if (at === top || dirname(at) === at) break
+    if (existsSync(join(at, '.git')) || dirname(at) === at) break
   }
   /*
    * A worktree elsewhere: its main checkout, by the repository's common folder. Asked before the
    * folders above the work tree, where a `.kehikot/` left in a home folder once opened in Kehikot
-   * would otherwise take the runs of every worktree under it.
+   * would otherwise take the runs of every worktree under it. Git is asked only here, so a project
+   * found inside the work tree never waits on it.
    */
-  const main = common?.endsWith('/.git') ? dirname(common) : null
-  if (isProject(main)) return main
+  if (dirname(at) !== at) {
+    const asked = spawnSync('git', ['-C', real, 'rev-parse', '--path-format=absolute', '--show-toplevel', '--git-common-dir'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000 })
+    const [top, common] = asked.status === 0 ? (asked.stdout ?? '').trim().split('\n') : []
+    const main = top === at && common?.endsWith('/.git') ? dirname(common) : null
+    if (isProject(main)) return main
+  }
   /* The rest of the way up: a repository inside a project's folder (a submodule, a clone) is in it. */
   while (dirname(at) !== at) {
     at = dirname(at)
