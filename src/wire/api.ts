@@ -27,8 +27,13 @@ export interface Api {
   output(id: string, from: number): Promise<Output>
   cancel(id: string): Promise<Overview>
   move(id: string, to: 'up' | 'down' | 'top'): Promise<Overview>
-  /** The person was shown this failed run: it stops asking for them. */
-  seen(id: string): Promise<Overview>
+  /**
+   * The person was shown this run (its output opened, or it was in view), or pressed Mark as seen
+   * (`marked`): it stops asking for them.
+   */
+  seen(id: string, marked?: boolean): Promise<Overview>
+  /** Mark as seen every run that still asks, of one project, or of every one with null. */
+  seenAll(project: string | null): Promise<Overview>
   /**
    * Hear when the queue changed: once as the stream opens (and again each time it reopens — after a
    * drop, or when the page is shown again), then at every change. Never on a clock; closed while the
@@ -54,8 +59,11 @@ export const api: Api = {
   async cancel(id) {
     return overview(answered(await ask<{ runs?: RunView[]; machine?: Machine }>('./api/act', { body: { op: 'cancel', id } })))
   },
-  async seen(id) {
-    return overview(answered(await ask<{ runs?: RunView[]; machine?: Machine }>('./api/act', { body: { op: 'seen', id } })))
+  async seen(id, marked) {
+    return overview(answered(await ask<{ runs?: RunView[]; machine?: Machine }>('./api/act', { body: { op: 'seen', id, ...(marked ? { marked: true } : {}) } })))
+  },
+  async seenAll(project) {
+    return overview(answered(await ask<{ runs?: RunView[]; machine?: Machine }>('./api/act', { body: { op: 'seen-all', ...(project ? { project } : {}) } })))
   },
   async move(id, to) {
     return overview(answered(await ask<{ runs?: RunView[]; machine?: Machine }>('./api/act', { body: { op: 'move', id, to } })))

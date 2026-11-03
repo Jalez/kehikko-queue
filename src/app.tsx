@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, BellRing, Check, ChevronsUp, CircleCheck, CircleDashed, CircleSlash, CircleX, Copy, LoaderCircle, SquareArrowOutUpRight, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, BellRing, Check, CheckCheck, ChevronsUp, CircleCheck, CircleDashed, CircleSlash, CircleX, Copy, LoaderCircle, SquareArrowOutUpRight, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { navigationResult, type HeaderItem, type PressValue } from 'kehikot-module-protocol'
@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet'
 import { headerItems, pressed, showingOf, type Showing } from '@/header'
 import { inboxItems, needsThePerson, runIdOf } from '@/inbox'
+import { observeInView, SEEN_IN_VIEW_MS, usePageVisible, useSeenInView, type Observe } from '@/in-view'
 import { api as realApi, type Api, type Overview } from '@/wire/api'
 import { useKehikot, type Host } from '@/wire/use-kehikot'
 
@@ -41,6 +42,8 @@ export function Screen({
   onPress = () => {},
   now = () => Date.now(),
   openedItem = null,
+  observe = observeInView,
+  seenAfterMs = SEEN_IN_VIEW_MS,
 }: {
   host: Host
   api?: Api
@@ -50,6 +53,10 @@ export function Screen({
   now?: () => number
   /** The Inbox item the person last opened: its run is shown, scrolled to and opened. */
   openedItem?: OpenedItem | null
+  /** How a row is watched for being in view; the tests replace it. */
+  observe?: Observe
+  /** How long a row asking for the person has to be in view to count as seen. */
+  seenAfterMs?: number
 }) {
   const server = useServerStanding()
   /* Every project's runs at This computer (the default), the open project's at Project: the scope, said by the host. */
@@ -119,13 +126,40 @@ export function Screen({
     if (row && typeof row.scrollIntoView === 'function') row.scrollIntoView({ block: 'nearest' })
   }, [focused])
 
-  /* A failure whose output is open has been shown to the person: it stops asking for them. Told once per run. */
+  /* A run asking for the person stops asking once it was shown to them: its output opened, or its row
+     in view on a visible page for a moment. Told once per run. */
   const told = useRef(new Set<string>())
+  const shown = useCallback(
+    (run: RunView) => {
+      if (!needsThePerson(run) || told.current.has(run.id)) return
+      told.current.add(run.id)
+      void act(api.seen(run.id))
+    },
+    [api],
+  )
   useEffect(() => {
-    if (!opened || !needsThePerson(opened) || told.current.has(opened.id)) return
-    told.current.add(opened.id)
-    void act(api.seen(opened.id))
-  }, [opened, api])
+    if (opened) shown(opened)
+  }, [opened, shown])
+  const visible = usePageVisible(host.visible)
+  const asking = runs.filter(needsThePerson)
+  /* Mark all seen: the runs in view's scope — the open project's, or every one at This computer. */
+  const allScope = showing === 'here' && host.projectPath ? host.projectPath : null
+  const nameOf = (id: string) => overview?.runs.find((run) => run.id === id)
+  const row = (run: RunView, children?: React.ReactNode) => (
+    <RunRow
+      key={run.id}
+      run={run}
+      now={now()}
+      jump={jump(run)}
+      focused={focused === run.id}
+      onOutput={() => setOpen(run.id)}
+      watch={visible ? { observe, ms: seenAfterMs, shown: () => shown(run) } : null}
+      onMarkSeen={() => void act(api.seen(run.id, true))}
+      supersededBy={run.supersededBy ? (nameOf(run.supersededBy) ?? null) : null}
+    >
+      {children}
+    </RunRow>
+  )
   const waiting = runs.filter((run) => run.state === 'queued')
   const running = runs.filter((run) => run.state === 'running')
   const finished = runs.filter((run) => run.state !== 'queued' && run.state !== 'running')
@@ -154,14 +188,25 @@ export function Screen({
                 {said}
               </p>
             ) : null}
+            {asking.length > 1 ? (
+              <div className="flex items-center gap-2" data-testid="asking">
+                <span className="text-attention-foreground text-xs">{asking.length} runs need your attention.</span>
+                <Button variant="outline" size="sm" className="h-6 px-2 text-xs" onClick={() => void act(api.seenAll(allScope))}>
+                  <CheckCheck className="size-3" />
+                  Mark all seen
+                </Button>
+              </div>
+            ) : null}
             {overview && !runs.length ? (
               <p className="text-muted-foreground text-xs" data-testid="empty">
                 {showing === 'here' && host.projectPath ? 'No test runs for this project lately. Every project’s: pick This computer as the scope in its settings.' : 'No test runs lately.'}
               </p>
             ) : null}
             <Group title="Waiting" runs={waiting}>
-              {(run, at) => (
-                <RunRow key={run.id} run={run} now={now()} jump={jump(run)} focused={focused === run.id} onOutput={() => setOpen(run.id)}>
+              {(run, at) =>
+                row(
+                  run,
+                  <>
                   <Button variant="ghost" size="sm" className="size-6 p-0" aria-label={`Move “${run.label}” to the top`} disabled={at === 0} onClick={() => void act(api.move(run.id, 'top'))}>
                     <ChevronsUp className="size-3" />
                   </Button>
@@ -172,18 +217,15 @@ export function Screen({
                     <ArrowDown className="size-3" />
                   </Button>
                   <Cancel run={run} onCancel={() => void act(api.cancel(run.id))} />
-                </RunRow>
-              )}
+                  </>,
+                )
+              }
             </Group>
             <Group title="Running" runs={running}>
-              {(run) => (
-                <RunRow key={run.id} run={run} now={now()} jump={jump(run)} focused={focused === run.id} onOutput={() => setOpen(run.id)}>
-                  <Cancel run={run} onCancel={() => void act(api.cancel(run.id))} />
-                </RunRow>
-              )}
+              {(run) => row(run, <Cancel run={run} onCancel={() => void act(api.cancel(run.id))} />)}
             </Group>
             <Group title="Finished" runs={finished}>
-              {(run) => <RunRow key={run.id} run={run} now={now()} jump={jump(run)} focused={focused === run.id} onOutput={() => setOpen(run.id)} />}
+              {(run) => row(run)}
             </Group>
           </>
         )}
@@ -242,24 +284,57 @@ export function seconds(ms: number): string {
  * A run still waiting or running says since when rather than for how long: the page is redrawn when
  * the queue changes, not on a clock, and a duration would stand still between changes.
  */
-function RunRow({ run, now, jump, focused = false, onOutput, children }: { run: RunView; now: number; jump: React.ReactNode; focused?: boolean; onOutput: () => void; children?: React.ReactNode }) {
-  /* A failure not yet shown to the person: a border in the attention colour AND the words, never colour alone.
-     It is a border, not an outline, so a focus outline inside the row stays its own. */
+function RunRow({
+  run,
+  now,
+  jump,
+  focused = false,
+  onOutput,
+  watch = null,
+  onMarkSeen,
+  supersededBy = null,
+  children,
+}: {
+  run: RunView
+  now: number
+  jump: React.ReactNode
+  focused?: boolean
+  onOutput: () => void
+  /** While the page is visible: how the row is watched, and what to tell once it was in view long enough. */
+  watch?: { observe: Observe; ms: number; shown: () => void } | null
+  onMarkSeen?: () => void
+  /** The later passing run that ended this one's asking, when the list still has it. */
+  supersededBy?: RunView | null
+  children?: React.ReactNode
+}) {
+  /* A result nobody expected, not yet shown to the person: a border in the attention colour AND the words,
+     never colour alone. It is a border, not an outline, so a focus outline inside the row stays its own. */
   const needs = needsThePerson(run)
+  const element = useRef<HTMLLIElement>(null)
+  useSeenInView(element, needs && watch !== null, () => watch?.shown(), watch?.observe, watch?.ms)
+  const surprise = run.expect === 'fail' && run.state === 'passed'
   const waited = run.state === 'queued' ? `waiting since ${clock(run.queuedAt)}` : `waited ${seconds((run.startedAt ?? run.finishedAt ?? now) - run.queuedAt)}`
   const ran = run.startedAt === null ? null : run.finishedAt === null ? `running since ${clock(run.startedAt)}` : `ran ${seconds(run.finishedAt - run.startedAt)}`
   return (
     <li
+      ref={element}
       className={`rounded-md px-2 py-1.5 ${needs ? 'border-attention border-2' : 'border'} ${focused ? 'bg-accent' : ''}`}
       data-run={run.id}
       data-needs={needs ? 'true' : undefined}
       data-focused={focused ? 'true' : undefined}
     >
       {needs ? (
-        <p className="text-attention-foreground mb-0.5 inline-flex items-center gap-1 text-[11px] font-medium" data-testid="needs">
-          <BellRing className="size-3" aria-hidden />
-          Needs your attention
-        </p>
+        <div className="mb-0.5 flex flex-wrap items-center gap-2">
+          <p className="text-attention-foreground inline-flex items-center gap-1 text-[11px] font-medium" data-testid="needs">
+            <BellRing className="size-3" aria-hidden />
+            Needs your attention{surprise ? ': it was expected to fail but passed' : ''}
+          </p>
+          {onMarkSeen ? (
+            <Button variant="link" size="sm" className="h-auto p-0 text-[11px]" aria-label={`Mark “${run.label}” as seen`} onClick={onMarkSeen}>
+              Mark as seen
+            </Button>
+          ) : null}
+        </div>
       ) : null}
       <div className="flex min-w-0 items-center gap-2">
         <StateMark run={run} />
@@ -278,7 +353,14 @@ function RunRow({ run, now, jump, focused = false, onOutput, children }: { run: 
         {run.refs.length ? ` · for ${run.refs.join(', ')}` : ''} · {waited}
         {ran !== null ? ` · ${ran}` : ''}
         {run.why ? ` · ${run.why}` : ''}
+        {run.expect === 'fail' && run.state === 'failed' ? ' · failed as expected' : ''}
+        {run.expect === 'fail' && run.state !== 'failed' && run.state !== 'passed' ? ' · expected to fail' : ''}
       </p>
+      {run.supersededBy ? (
+        <p className="text-muted-foreground text-xs" data-testid="superseded">
+          {supersededBy ? `Superseded by “${supersededBy.label}”, which passed${supersededBy.finishedAt !== null ? ` at ${clock(supersededBy.finishedAt)}` : ''}.` : 'Superseded by a later passing run of the same work.'}
+        </p>
+      ) : null}
       {run.state !== 'queued' ? (
         <Button variant="link" size="sm" className="h-auto p-0 text-xs" aria-haspopup="dialog" aria-label={`Output of “${run.label}”`} onClick={onOutput}>
           Output

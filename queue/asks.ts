@@ -3,6 +3,7 @@ import { statSync } from 'node:fs'
 
 import { EPIC_SLUG, LIMITS, readTrackerRef } from 'kehikot-module-protocol'
 
+import type { Expect } from './attention.ts'
 import { ARGV_BYTES_MOST, ARGV_MOST, LABEL_MOST, RUN_KINDS, type Kind } from './queue.ts'
 
 /**
@@ -70,4 +71,10 @@ export function refsOf(refs: unknown): Checked<string[]> {
 
 export function epicOf(epic: unknown): string | null {
   return typeof epic === 'string' && EPIC_SLUG.test(epic) ? epic : null
+}
+
+/** What the asker expects of the run: nothing (it should pass), or 'fail' (a red test first). */
+export function expectOf(expect: unknown): Checked<Expect | null> {
+  if (expect === undefined || expect === null || expect === '' || expect === 'pass') return { ok: true, value: null }
+  return expect === 'fail' ? { ok: true, value: 'fail' } : { ok: false, why: 'expect is "fail", for a run meant to fail (a red test written before the fix); leave it out for a run meant to pass.' }
 }

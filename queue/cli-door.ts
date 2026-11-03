@@ -1,6 +1,6 @@
 import { resolveDoorPlace, sameTicket, type Before, type HostHasProjectOptions } from 'kehikot-module-protocol/serve'
 
-import { argvOf, cwdOf, epicOf, kindOf, labelOf, refsOf } from './asks.ts'
+import { argvOf, cwdOf, epicOf, expectOf, kindOf, labelOf, refsOf } from './asks.ts'
 import { runEnv } from './env.ts'
 import { originFromCwd, originFromPlace } from './origin-find.ts'
 import { ended, type Asker, type Queue } from './queue.ts'
@@ -18,7 +18,7 @@ import { projectOf } from '../store.ts'
  *    has it could have run the command itself.
  *  - The body is JSON (the doors' rule) and bounded; the command is an argv, run as given.
  *
- *    POST /api/queue/run     { argv, cwd, env, keepEnv?, kind?, label?, refs?, epic?, place?, from? } → { ok, id, key }
+ *    POST /api/queue/run     { argv, cwd, env, keepEnv?, kind?, label?, refs?, epic?, place?, from?, expect? } → { ok, id, key }
  *    GET  /api/queue/follow  ?id=&from=  → one JSON object per line: { run } as it changes, { out } as
  *                            output arrives (from byte `from`), and last { end: run } when it ended.
  *    POST /api/queue/cancel  { id, key }
@@ -70,6 +70,8 @@ export function cliDoor(options: CliDoorOptions): Before {
       if (!label.ok) return refuse(400, label.why)
       const refs = refsOf(body.refs)
       if (!refs.ok) return refuse(400, refs.why)
+      const expect = expectOf(body.expect)
+      if (!expect.ok) return refuse(400, expect.why)
       const token = typeof body.place === 'string' ? body.place : null
       const place = token ? await resolveDoorPlace(token, options.ask?.() ?? {}) : null
       const from = typeof body.from === 'string' ? body.from.trim().slice(0, 80) : ''
@@ -92,6 +94,7 @@ export function cliDoor(options: CliDoorOptions): Before {
         project: place?.project ?? projectOf(cwd.value),
         asker: asked,
         origin,
+        expect: expect.value,
       })
       return Response.json({ ok: true, id: run.id, key: run.key, dropped: env.dropped, run: q.view(run) })
     }

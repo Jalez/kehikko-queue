@@ -39,6 +39,7 @@ function setup(runs: Overview['runs'], over: Partial<Host> = {}, answer: unknown
     cancel: async () => ({ runs, machine }),
     move: async () => ({ runs, machine }),
     seen: async () => ({ runs, machine }),
+    seenAll: async () => ({ runs, machine }),
   }
   render(<Screen host={host} api={api} showing="all" now={() => 5000} />)
   return asked
@@ -202,6 +203,7 @@ describe('the output drawer', () => {
       cancel: async () => ({ runs, machine }),
       move: async () => ({ runs, machine }),
       seen: async () => ({ runs, machine }),
+      seenAll: async () => ({ runs, machine }),
     }
     render(<Screen host={{ where: 'hosted', project: 'p', projectPath: '/p', projectId: null, epic: 'queue', parts: [], theme: 'light', header: () => {}, activity: () => {}, request: async () => ({}), picked: [] }} api={cutApi} now={() => 5000} />)
     await settle()

@@ -14,13 +14,14 @@ import {
 import { DECLARED, ID, VERSION } from './manifest.ts'
 import { isSkillPath, skillAt, skillDeclarations, serveFrom } from './skills.ts'
 import { projectOf, publish } from './store.ts'
-import { argvOf, cwdOf, epicOf, kindOf, labelOf, refsOf } from './queue/asks.ts'
+import { argvOf, cwdOf, epicOf, expectOf, kindOf, labelOf, refsOf } from './queue/asks.ts'
 import { runEnv } from './queue/env.ts'
 import { originFromCwd, originFromPlace } from './queue/origin-find.ts'
 import { makeStream, runsChanged, waitingMoved } from './live.ts'
 import { logFile } from './queue/runner.ts'
 import { cliToken, logsDir, queueDir } from './queue/machine.ts'
 import { ended, Queue, type Asker, type Run, type RunView } from './queue/queue.ts'
+import { asExpected } from './queue/attention.ts'
 import { minutes, type Move } from './queue/schedule.ts'
 import { SETTINGS, capacityOf, cores, loadNow, readValues, writeValue } from './queue/settings.ts'
 
@@ -51,7 +52,9 @@ export const DIR = queueDir()
  */
 export const toldOf = (get: () => Queue | null) => ({
   changed: runsChanged,
-  ticked: () => waitingMoved(() => get()?.list().map((run) => run.waiting ?? '').join('\n') ?? ''),
+  /* Only what the WAITING runs say: a run that is not waiting has none, and counting it would
+     tell the page "something moved" on every tick that merely has runs in the list. */
+  ticked: () => waitingMoved(() => get()?.list().filter((run) => run.state === 'queued').map((run) => run.waiting ?? '').join('\n') ?? ''),
 })
 
 /** The one queue of this process. Tests make their own with `new Queue`. */
@@ -77,8 +80,9 @@ export const stream = makeStream(
   (id) => (queue().get(id) ? logFile(logsDir(DIR), id) : null),
   (id) => (queue().get(id)?.state === 'running' ? queue().output(id, 0, 0).size : null),
 )
-/** For tests: use this queue. */
+/** For tests: use this queue. The one it replaces is stopped, so two queues never share the folder. */
 export function useQueue(one: Queue | null): void {
+  if (held && held !== one) held.stop()
   held = one
 }
 
@@ -103,12 +107,14 @@ const took = (from: number | null, to: number | null) => (from === null || to ==
 
 /** One run, in a few lines an agent reads. */
 export function runSaid(run: RunView): string {
-  const head = `${run.id} — ${JSON.stringify(run.label)} (${run.kind}) — ${run.state}${run.exit !== null ? `, exit ${run.exit}` : ''}`
+  const head = `${run.id} — ${JSON.stringify(run.label)} (${run.kind}) — ${run.state}${run.exit !== null ? `, exit ${run.exit}` : ''}${run.expect === 'fail' ? (run.state === 'failed' ? ', as expected' : run.state === 'passed' ? ', but it was expected to fail' : ', expected to fail') : ''}`
   const lines = [head, `  from ${run.asker.said}${run.epic ? `, epic ${run.epic}` : ''}${run.refs.length ? `, for ${run.refs.join(', ')}` : ''}`]
   lines.push(`  in ${run.cwd}: ${run.argv.join(' ').slice(0, 200)}`)
   if (run.state === 'queued') lines.push(`  ${run.waiting ?? 'Waiting.'} Asked ${at(run.queuedAt)}.`)
   if (run.state === 'running') lines.push(`  Running since ${at(run.startedAt)} (waited ${took(run.queuedAt, run.startedAt)}${run.overdue ? ', started past the load guard after its longest wait' : ''}).`)
   if (ended(run.state)) lines.push(`  Ended ${at(run.finishedAt)}: waited ${took(run.queuedAt, run.startedAt ?? run.finishedAt)}, ran ${took(run.startedAt, run.finishedAt) || '0 s'}.${run.why ? ` ${run.why}` : ''}`)
+  if (run.supersededBy) lines.push(`  Superseded by ${run.supersededBy}, a later passing run of the same work.`)
+  else if ((run.state === 'failed' || run.state === 'passed') && !asExpected(run) && run.seenAt) lines.push(`  Marked seen${run.seenBy === 'agent' ? ' by the session that asked for it' : run.seenBy === 'person' ? ' by the person' : ''}.`)
   return lines.join('\n')
 }
 
@@ -152,6 +158,11 @@ export function tools() {
           kind: { type: 'string', enum: ['push', 'verify', 'review', 'other'], description: 'What it is for. Default other.' },
           label: { type: 'string', description: 'What a person calls this run: "pre-push monorepo", "bun test". Default: the command.' },
           ref: { description: 'The change or issue it is for, spelled as the tracker reading does: "!3907", "gh#12". One, or a list.', anyOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }] },
+          expect: {
+            type: 'string',
+            enum: ['fail'],
+            description: '"fail" when the run is MEANT to fail (a red test written before the fix): its failure then asks nobody ("failed as expected"), and a pass asks the person ("expected to fail but passed"). Its exit code is still the command\'s own.',
+          },
           ...PLACE_ARGS,
         },
         required: ['command'],
@@ -174,7 +185,11 @@ export function tools() {
         + 'when the time is up says so; call queue_wait again with the same id.',
       inputSchema: {
         type: 'object',
-        properties: { id: { type: 'string', description: 'The run\'s id, from queue_run.' }, timeout_seconds: { type: 'number', description: 'How long to wait, in seconds.' } },
+        properties: {
+          id: { type: 'string', description: 'The run\'s id, from queue_run.' },
+          timeout_seconds: { type: 'number', description: 'How long to wait, in seconds.' },
+          key: { type: 'string', description: 'The key queue_run answered, when this conversation has no place: it says the result reached the session that asked.' },
+        },
         required: ['id'],
       },
       annotations: { readOnlyHint: true },
@@ -190,6 +205,23 @@ export function tools() {
         required: ['id'],
       },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    },
+    {
+      name: 'queue_seen',
+      description:
+        'Say you have handled a failure of YOURS, so it stops asking the person in the Inbox: one run by id, or, with all: true, every '
+        + 'failure of the runs this conversation\'s place asked for. The run stays in the list. Use it once you have read a failure and '
+        + 'dealt with it (fixed it, or decided it is not a problem); a later passing run of the same work clears it by itself. Yours is one '
+        + 'asked for by this conversation\'s place, or one whose key (from queue_run) you pass.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'The run\'s id.' },
+          all: { type: 'boolean', description: 'Every failure of your own runs, instead of one.' },
+          key: { type: 'string', description: 'The key queue_run answered, when this conversation has no place.' },
+        },
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
   ]
 }
@@ -242,6 +274,8 @@ async function call(name: string, args: Record<string, unknown>, query: URLSearc
     if (!Number.isFinite(seconds) || seconds < 0) throw new Error('timeout_seconds is a number of seconds.')
     const run = await q.wait(id, Math.min(seconds, 1800) * 1000)
     if (!run) throw new Error(`There is no run ${id}.`)
+    /* The session that asked has now read what came of it: its failure asks the person less loudly. */
+    if (ended(run.state)) q.told(id, { key: typeof args.key === 'string' ? args.key : null, token })
     return resultSaid(q, run)
   }
 
@@ -250,6 +284,19 @@ async function call(name: string, args: Record<string, unknown>, query: URLSearc
     const refused = q.cancel(id, { key: typeof args.key === 'string' ? args.key : null, token })
     if (refused) throw new Error(refused)
     return `Cancelled ${id}.`
+  }
+
+  if (name === 'queue_seen') {
+    const key = typeof args.key === 'string' ? args.key : null
+    if (args.all === true) {
+      if (!token) throw new Error('all: true marks the runs this conversation\'s place asked for, and this conversation has no place. Pass id (and key) for one run.')
+      const marked = q.seenAll({ token })
+      return marked.length ? `Marked ${marked.length} failure${marked.length === 1 ? '' : 's'} seen: ${marked.join(', ')}.` : 'None of your runs needed the person.'
+    }
+    if (!id) throw new Error('queue_seen takes id, or all: true.')
+    const refused = q.seen(id, { key, token })
+    if (refused) throw new Error(refused)
+    return `${id} no longer asks the person.`
   }
 
   if (name === 'queue_run') {
@@ -272,6 +319,8 @@ async function call(name: string, args: Record<string, unknown>, query: URLSearc
     if (!label.ok) throw new Error(label.why)
     const refs = refsOf(args.ref ?? args.refs)
     if (!refs.ok) throw new Error(refs.why)
+    const expect = expectOf(args.expect)
+    if (!expect.ok) throw new Error(expect.why)
     const epic = epicOf(named.epic)
     const origin = place ? originFromPlace(place, cwd.value) : await originFromCwd(cwd.value, epic, ASK.options)
     const run = q.enqueue({
@@ -285,6 +334,7 @@ async function call(name: string, args: Record<string, unknown>, query: URLSearc
       project: project ?? projectOf(cwd.value),
       asker: mcpAsker(place, place ? token : null),
       origin,
+      expect: expect.value,
     })
     const view = q.view(run)
     return [
@@ -294,7 +344,7 @@ async function call(name: string, args: Record<string, unknown>, query: URLSearc
     ].filter(Boolean).join('\n')
   }
 
-  throw new Error(`There is no tool "${name.slice(0, 60)}" here. This door has queue_run, queue_status, queue_wait and queue_cancel.`)
+  throw new Error(`There is no tool "${name.slice(0, 60)}" here. This door has queue_run, queue_status, queue_wait, queue_cancel and queue_seen.`)
 }
 
 interface Rpc {
@@ -392,10 +442,15 @@ export async function answer(
       return no ? bad(no) : ok(overview(q))
     }
     if (body?.op === 'seen') {
-      const no = q.seen(id)
+      /* `marked`: the person pressed Mark as seen; else it was shown to them (opened, or in view). */
+      const no = q.seen(id, body.marked === true ? { person: true } : undefined)
       return no ? bad(no) : ok(overview(q))
     }
-    return bad('An act is cancel (id), move (id, to: up, down or top) or seen (id).')
+    if (body?.op === 'seen-all') {
+      q.seenAll({ person: true }, typeof body.project === 'string' ? body.project : null)
+      return ok(overview(q))
+    }
+    return bad('An act is cancel (id), move (id, to: up, down or top), seen (id) or seen-all (project).')
   }
 
   if (path.startsWith('/api/')) return bad('Not here.', 404)
