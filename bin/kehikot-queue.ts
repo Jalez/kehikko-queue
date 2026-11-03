@@ -4,13 +4,15 @@
  * its exit code. For a shell, a script and a git hook:
  *
  *   kehikot-queue run [--kind push|verify|review|other] [--label TEXT] [--ref REF]… [--epic SLUG]
- *                     [--place TOKEN] [--keep-env NAME]… [--from TEXT] -- COMMAND [ARG…]
+ *                     [--place TOKEN] [--keep-env NAME]… [--from TEXT] [--expect fail] -- COMMAND [ARG…]
  *   kehikot-queue status
  *
  * It asks Test runs to run COMMAND in this folder with this environment (less anything that looks
  * like a secret, unless named with --keep-env), prints where it is in the queue while it waits,
  * prints the command's output as it runs, and exits with the command's own exit code. Ctrl-C while
- * waiting cancels the run.
+ * waiting cancels the run. `--expect fail` says the run is meant to fail (a red test written before
+ * the fix): its failure then asks nobody in Kehikot's Inbox, and a pass does. The exit code is still
+ * the command's own.
  *
  * When Test runs is not running, or will not take the run, the command runs here, now, outside the
  * queue, and this says so: a hook never breaks because the queue is away.
@@ -76,11 +78,13 @@ export interface Parsed {
   place: string | null
   keep: string[]
   from: string | null
+  /** 'fail': the run is meant to fail. */
+  expect: 'fail' | null
   argv: string[]
 }
 
 export function parse(args: string[], env: Env = process.env): Parsed | string {
-  const out: Parsed = { kind: 'other', label: null, refs: [], epic: null, place: env.KEHIKOT_PLACE || null, keep: [], from: null, argv: [] }
+  const out: Parsed = { kind: 'other', label: null, refs: [], epic: null, place: env.KEHIKOT_PLACE || null, keep: [], from: null, expect: null, argv: [] }
   for (let at = 0; at < args.length; at++) {
     const arg = args[at]!
     if (arg === '--') {
@@ -95,7 +99,11 @@ export function parse(args: string[], env: Env = process.env): Parsed | string {
     else if (arg === '--place') out.place = value() ?? null
     else if (arg === '--keep-env') out.keep.push(value() ?? '')
     else if (arg === '--from') out.from = value() ?? null
-    else return `I do not know ${arg}. Put the command after --.`
+    else if (arg === '--expect') {
+      const said = value()
+      if (said !== 'fail') return '--expect takes fail: --expect fail, for a run meant to fail (a red test written before the fix).'
+      out.expect = 'fail'
+    } else return `I do not know ${arg}. Put the command after --.`
   }
   if (!out.argv.length) return 'Put the command to run after --: kehikot-queue run --kind push --label "pre-push" -- bun test'
   if (!['push', 'verify', 'review', 'other'].includes(out.kind)) return '--kind is push, verify, review or other.'
@@ -167,6 +175,7 @@ export async function queued(parsed: Parsed, env: Env = process.env, cwd = proce
         epic: parsed.epic,
         place: parsed.place,
         from: parsed.from ?? (env.CLAUDECODE ? 'a Claude Code session\'s shell' : 'a shell'),
+        ...(parsed.expect ? { expect: parsed.expect } : {}),
       }),
     })
     answer = (await response.json()) as typeof answer
@@ -226,7 +235,8 @@ export async function queued(parsed: Parsed, env: Env = process.env, cwd = proce
             /* The queue's own trouble, not the command's: the run never started. Run it here instead. */
             if (run.state === 'cancelled' && run.why && /restarted before/.test(run.why)) return direct(parsed.argv, run.why)
             if (run.state === 'failed' && run.exit === null && run.why && /could not be started|environment was lost/.test(run.why)) return direct(parsed.argv, `Test runs could not start it (${run.why}).`)
-            SAY(`${id} ${run.state}${run.exit !== null ? ` (exit ${run.exit})` : ''}${run.why ? `: ${run.why}` : '.'}`)
+            const expected = parsed.expect === 'fail' ? (run.state === 'failed' ? ', as expected' : run.state === 'passed' ? ', but it was expected to fail' : '') : ''
+            SAY(`${id} ${run.state}${run.exit !== null ? ` (exit ${run.exit})` : ''}${expected}${run.why ? `: ${run.why}` : '.'}`)
             return exitFor(run)
           }
         }
@@ -269,7 +279,7 @@ if (import.meta.main) {
   } else if (verb === 'status') {
     process.exit(await status())
   } else {
-    process.stderr.write('usage: kehikot-queue run [--kind push|verify|review|other] [--label TEXT] [--ref REF] [--epic SLUG] [--place TOKEN] [--keep-env NAME] [--from TEXT] -- COMMAND [ARG…]\n       kehikot-queue status\n')
+    process.stderr.write('usage: kehikot-queue run [--kind push|verify|review|other] [--label TEXT] [--ref REF] [--epic SLUG] [--place TOKEN] [--keep-env NAME] [--from TEXT] [--expect fail] -- COMMAND [ARG…]\n       kehikot-queue status\n')
     process.exit(2)
   }
 }

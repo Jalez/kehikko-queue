@@ -8,6 +8,7 @@ import { alive, capLog, exitFile, exitOf, LOG_MOST, logFile, readLog, shellSpawn
 import { decide, moved, ordered, priorityOf, waitingSaid, type Capacity, type Move } from './schedule.ts'
 import { ensureDirs, exitDir, logsDir } from './machine.ts'
 import type { Origin } from './origin.ts'
+import { needsThePerson, superseded, type Expect } from './attention.ts'
 
 /**
  * The queue: every run asked for on this computer, from any session, in one list. It starts each
@@ -55,7 +56,15 @@ export interface Ask {
   asker: Asker
   /** Where it came from, as far as was known; absent is unknown. */
   origin?: Origin | null
+  /** 'fail' when the asker means it to fail (a red test first); absent is meant to pass. */
+  expect?: Expect | null
 }
+
+/** Who may act on a run as its own: the person, or a caller with its key or the place token that asked. */
+export type By = { person: true } | { key?: string | null; token?: string | null }
+
+/** Who marked a run seen, when it was marked rather than opened: the person, or the session that asked. */
+export type SeenBy = 'person' | 'agent'
 
 export interface Run {
   id: string
@@ -89,6 +98,14 @@ export interface Run {
    * this was recorded).
    */
   seenAt?: number | null
+  /** Who marked it seen, when somebody pressed Mark as seen or an agent called queue_seen. */
+  seenBy?: SeenBy | null
+  /** The later passing run of the same work that ended its asking. */
+  supersededBy?: string | null
+  /** 'fail': the asker meant it to fail. A failure then asks nobody, and a pass does. */
+  expect?: Expect | null
+  /** When the session that asked for it was handed its result by queue_wait: it has read the failure. */
+  askerToldAt?: number | null
 }
 
 /** A run as anyone may see it: no key, no environment. */
@@ -119,6 +136,12 @@ function endedAt(file: string): number | null {
   } catch {
     return null
   }
+}
+
+/** Whether `by` may act on the run as its own. */
+function owns(run: Run, by: By): boolean {
+  if ('person' in by) return true
+  return !!((by.key && by.key === run.key) || (by.token && run.asker.token && by.token === run.asker.token))
 }
 
 export const ended = (state: State) => state === 'passed' || state === 'failed' || state === 'cancelled'
@@ -173,15 +196,22 @@ export class Queue {
       }
       this.#runs.set(run.id, run)
     }
+    this.#supersede()
     this.#prune()
     this.#save()
   }
 
   #save(): void {
-    const runs = [...this.#runs.values()]
-    const temporary = `${this.#file}.${process.pid}.tmp`
-    writeFileSync(temporary, `${JSON.stringify({ version: 1, runs }, null, 1)}\n`, { mode: 0o600 })
-    renameSync(temporary, this.#file)
+    /* A run's process can exit after the queue was stopped and its folder removed (a test's
+       scratch): there is then nothing to keep, and that is not an error. */
+    try {
+      const runs = [...this.#runs.values()]
+      const temporary = `${this.#file}.${process.pid}.tmp`
+      writeFileSync(temporary, `${JSON.stringify({ version: 1, runs }, null, 1)}\n`, { mode: 0o600 })
+      renameSync(temporary, this.#file)
+    } catch {
+      /* The folder is gone: the queue is not keeping state any more. */
+    }
   }
 
   #prune(): void {
@@ -244,6 +274,7 @@ export class Queue {
       pid: null,
       overdue: false,
       seenAt: null,
+      expect: ask.expect ?? null,
     }
     this.#runs.set(run.id, run)
     this.#env.set(run.id, ask.env)
@@ -256,13 +287,10 @@ export class Queue {
    * Cancel a run. `by` is who asks: the person (always), or a caller with the run's key or its
    * place token. Null when it was cancelled; a sentence when it was not.
    */
-  cancel(id: string, by: { person: true } | { key?: string | null; token?: string | null }): string | null {
+  cancel(id: string, by: By): string | null {
     const run = this.#runs.get(id)
     if (!run) return 'There is no such run.'
-    if (!('person' in by)) {
-      const owns = (by.key && by.key === run.key) || (by.token && run.asker.token && by.token === run.asker.token)
-      if (!owns) return 'That run is not yours to cancel: only the session that asked for it, or the person on the Test runs page, can cancel it.'
-    }
+    if (!owns(run, by)) return 'That run is not yours to cancel: only the session that asked for it, or the person on the Test runs page, can cancel it.'
     if (ended(run.state)) return `That run has already ${run.state === 'passed' ? 'passed' : run.state === 'failed' ? 'failed' : 'been cancelled'}.`
     if (run.state === 'running' && run.pid !== null) stopGroup(run.pid)
     Object.assign(run, { state: 'cancelled', finishedAt: this.#clock(), why: 'person' in by ? 'Cancelled by the person.' : 'Cancelled by the session that asked for it.' })
@@ -289,13 +317,57 @@ export class Queue {
    * for them; the run stays in the list. Null when marked (or already marked, or not a failure: there
    * is nothing to see then); a sentence when there is no such run.
    */
-  seen(id: string): string | null {
+  seen(id: string, marked?: By): string | null {
     const run = this.#runs.get(id)
     if (!run) return 'There is no such run.'
-    if (run.state !== 'failed' || run.seenAt) return null
+    if (marked && !owns(run, marked)) return 'That run is not yours to mark: only the session that asked for it, or the person on the Test runs page, can mark it seen.'
+    if (!needsThePerson(run)) return null
     run.seenAt = this.#clock()
+    if (marked) run.seenBy = 'person' in marked ? 'person' : 'agent'
     this.#changed(run)
     return null
+  }
+
+  /**
+   * Mark every run still needing the person seen: the person's "Mark all seen" (of one project, or of
+   * every one when `project` is null), or an agent's (only the runs it asked for). Answers the ids marked.
+   */
+  seenAll(marked: By, project: string | null = null): string[] {
+    const now = this.#clock()
+    const done: string[] = []
+    for (const run of this.#runs.values()) {
+      if (!needsThePerson(run) || !owns(run, marked)) continue
+      if (project !== null && run.project !== project) continue
+      run.seenAt = now
+      run.seenBy = 'person' in marked ? 'person' : 'agent'
+      done.push(run.id)
+    }
+    if (done.length) this.#changedMany(done.map((id) => this.#runs.get(id)!))
+    return done
+  }
+
+  /**
+   * The session that asked for a run was handed its result (queue_wait): it has read the failure, so
+   * the failure asks the person less loudly. Only for the asker's own run, and once.
+   */
+  told(id: string, by: { key?: string | null; token?: string | null }): void {
+    const run = this.#runs.get(id)
+    if (!run || !needsThePerson(run) || run.askerToldAt || !(by.key || by.token) || !owns(run, by)) return
+    run.askerToldAt = this.#clock()
+    this.#changed(run)
+  }
+
+  /** Each run still needing the person that a later pass of the same work answered: seen, and said by which. */
+  #supersede(): Run[] {
+    const now = this.#clock()
+    const changed: Run[] = []
+    for (const { id, by } of superseded([...this.#runs.values()])) {
+      const run = this.#runs.get(id)!
+      run.seenAt = now
+      run.supersededBy = by
+      changed.push(run)
+    }
+    return changed
   }
 
   /* ---- looking ---- */
@@ -429,12 +501,20 @@ export class Queue {
     run.finishedAt = at ?? this.#clock()
     run.pid = run.pid ?? null
     capLog(logFile(logsDir(this.options.dir), run.id))
-    if (tell) this.#changed(run)
+    /* A pass answers the failures of the same work asked before it. */
+    const answered = run.state === 'passed' ? this.#supersede() : []
+    if (tell) this.#changedMany([run, ...answered])
   }
 
   #changed(run: Run): void {
+    this.#changedMany([run])
+  }
+
+  #changedMany(runs: readonly Run[]): void {
     this.#save()
-    if (run.project && this.options.publish) this.options.publish(run.project, this.resultsFor(run.project))
+    if (this.options.publish) {
+      for (const project of new Set(runs.map((run) => run.project))) if (project) this.options.publish(project, this.resultsFor(project))
+    }
     for (const waiter of [...this.#waiters]) waiter()
     this.options.changed?.()
   }

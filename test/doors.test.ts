@@ -96,8 +96,8 @@ const placeFetch = (async (url: string | URL | Request) => {
 }) as typeof fetch
 
 describe('the MCP door', () => {
-  test('offers the four tools', () => {
-    expect(tools().map((one) => one.name)).toEqual(['queue_run', 'queue_status', 'queue_wait', 'queue_cancel'])
+  test('offers the five tools', () => {
+    expect(tools().map((one) => one.name)).toEqual(['queue_run', 'queue_status', 'queue_wait', 'queue_cancel', 'queue_seen'])
   })
   test('queue_run takes the session and epic from its place; queue_wait answers the exit code and the output', async () => {
     ASK.options = { fetch: placeFetch, env: { KEHIKOT_ORIGINS: 'http://127.0.0.1:9' } }
@@ -135,6 +135,51 @@ describe('the MCP door', () => {
   })
 })
 
+describe('clearing a failure from the MCP door', () => {
+  const idOf = (text: string) => /Queued (r[0-9a-z]+)/.exec(text)![1]!
+  test('queue_wait handing a failure to the session that asked lowers it; anyone else\'s wait does not', async () => {
+    ASK.options = { fetch: placeFetch, env: { KEHIKOT_ORIGINS: 'http://127.0.0.1:9' } }
+    const id = idOf((await call('queue_run', { command: ['sh', '-c', 'exit 2'], cwd: tmpdir() }, `kehikot-place=${PLACE}`)).text)
+    await call('queue_wait', { id, timeout_seconds: 10 })
+    expect(q.get(id)?.askerToldAt ?? null).toBeNull()
+    await call('queue_wait', { id, timeout_seconds: 10 }, `kehikot-place=${PLACE}`)
+    expect(q.get(id)?.askerToldAt).toBeNumber()
+    expect(q.get(id)?.seenAt ?? null).toBeNull()
+  })
+  test('queue_seen marks one of your own failures, never another\'s; all: true marks every one of yours', async () => {
+    ASK.options = { fetch: placeFetch, env: { KEHIKOT_ORIGINS: 'http://127.0.0.1:9' } }
+    const a = idOf((await call('queue_run', { command: ['sh', '-c', 'exit 2'], cwd: tmpdir(), label: 'a' }, `kehikot-place=${PLACE}`)).text)
+    const b = idOf((await call('queue_run', { command: ['sh', '-c', 'exit 2'], cwd: tmpdir(), label: 'b' }, `kehikot-place=${PLACE}`)).text)
+    const other = await call('queue_run', { command: ['sh', '-c', 'exit 2'], cwd: tmpdir(), label: 'c' })
+    const [, c, key] = /Queued (r[0-9a-z]+) \(key ([A-Za-z0-9_-]+)\)/.exec(other.text)!
+    for (const id of [a, b, c!]) await q.wait(id, 10_000)
+    expect((await call('queue_seen', { id: c! }, `kehikot-place=${PLACE}`)).text).toContain('not yours')
+    expect(q.get(c!)?.seenAt ?? null).toBeNull()
+    expect((await call('queue_seen', { id: a }, `kehikot-place=${PLACE}`)).text).toContain('no longer asks')
+    expect(q.get(a)).toMatchObject({ seenBy: 'agent', seenAt: expect.any(Number) })
+    expect((await call('queue_seen', { all: true }, `kehikot-place=${PLACE}`)).text).toContain('Marked 1 failure seen')
+    expect(q.get(b)?.seenAt).toBeNumber()
+    expect(q.get(c!)?.seenAt ?? null).toBeNull()
+    expect((await call('queue_seen', { all: true })).error).toBe(true)
+    expect((await call('queue_seen', { id: c!, key: key! })).error).toBe(false)
+    expect(q.get(c!)?.seenAt).toBeNumber()
+  })
+  test('queue_run takes expect: fail, and refuses another word', async () => {
+    const ran = await call('queue_run', { command: ['sh', '-c', 'exit 1'], cwd: tmpdir(), expect: 'fail' })
+    const id = idOf(ran.text)
+    expect(q.get(id)?.expect).toBe('fail')
+    expect((await call('queue_wait', { id, timeout_seconds: 10 })).text).toContain('failed, exit 1, as expected')
+    expect((await call('queue_run', { command: 'true', cwd: tmpdir(), expect: 'maybe' })).error).toBe(true)
+  })
+  test('the CLI door takes expect: fail', async () => {
+    const queued = await ask('/api/queue/run', { method: 'POST', headers: { 'content-type': 'application/json', [TOKEN_HEADER]: TOKEN }, body: runBody({ expect: 'fail' }) })
+    const { id } = (await queued!.json()) as { id: string }
+    expect(q.get(id)?.expect).toBe('fail')
+    const refused = await ask('/api/queue/run', { method: 'POST', headers: { 'content-type': 'application/json', [TOKEN_HEADER]: TOKEN }, body: runBody({ expect: 'red' }) })
+    expect(refused?.status).toBe(400)
+  })
+})
+
 describe('the page\'s writes', () => {
   test('cancel and move need the page\'s ticket', async () => {
     const run = q.enqueue({ argv: ['sh', '-c', 'sleep 5'], cwd: tmpdir(), env: {}, kind: 'other', label: 'x', refs: [], epic: null, project: null, asker: { via: 'cli', said: 'a test', token: null, conversation: null } })
@@ -153,5 +198,18 @@ describe('the page\'s writes', () => {
     const done = await answer('POST', '/api/act', new URLSearchParams(), { op: 'seen', id: run.id }, TICKET, q)
     expect(done?.status).toBe(200)
     expect(q.get(run.id)?.seenAt).toBeNumber()
+  })
+  test('Mark as seen and Mark all seen need the page\'s ticket; all seen keeps to the project asked', async () => {
+    const failing = (project: string | null) => q.enqueue({ argv: ['sh', '-c', 'exit 1'], cwd: tmpdir(), env: {}, kind: 'other', label: 'x', refs: [], epic: null, project, asker: { via: 'cli', said: 'a test', token: null, conversation: null } })
+    const one = failing('/a')
+    const two = failing('/a')
+    const three = failing('/b')
+    for (const run of [one, two, three]) await q.wait(run.id, 10_000)
+    expect((await answer('POST', '/api/act', new URLSearchParams(), { op: 'seen-all', project: '/a' }, null, q))?.status).toBe(403)
+    expect((await answer('POST', '/api/act', new URLSearchParams(), { op: 'seen', id: one.id, marked: true }, TICKET, q))?.status).toBe(200)
+    expect(q.get(one.id)?.seenBy).toBe('person')
+    expect((await answer('POST', '/api/act', new URLSearchParams(), { op: 'seen-all', project: '/a' }, TICKET, q))?.status).toBe(200)
+    expect(q.get(two.id)?.seenAt).toBeNumber()
+    expect(q.get(three.id)?.seenAt ?? null).toBeNull()
   })
 })

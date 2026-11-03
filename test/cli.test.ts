@@ -158,6 +158,11 @@ describe('the CLI\'s own pieces', () => {
     expect(parse(['--kind', 'nightly', '--', 'x'], {})).toContain('--kind')
     expect(parse(['--', 'x'], { KEHIKOT_PLACE: 'tok' })).toMatchObject({ place: 'tok' })
   })
+  test('parse --expect fail, and only fail', () => {
+    expect(parse(['--', 'x'], {})).toMatchObject({ expect: null })
+    expect(parse(['--expect', 'fail', '--', 'bun', 'test'], {})).toMatchObject({ expect: 'fail', argv: ['bun', 'test'] })
+    expect(parse(['--expect', 'pass', '--', 'x'], {})).toContain('--expect')
+  })
   test('the exit code of an ended run', () => {
     const run = (state: string, exit: number | null) => ({ id: 'r', state, exit, why: null, waiting: null, position: null })
     expect(exitFor(run('passed', 0))).toBe(0)

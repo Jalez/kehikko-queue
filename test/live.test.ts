@@ -42,8 +42,10 @@ const call = async (name: string, args: Record<string, unknown>) => {
   return (reply.body as { result: { content: { text: string }[] } }).result.content[0]!.text
 }
 
-afterEach(() => {
+afterEach(async () => {
   stopWatching()
+  /* Let a run's process exit, noticed a moment late, fire while no page is watching, then forget it. */
+  await settle(300)
   forgetSaid()
 })
 afterAll(() => {

@@ -59,6 +59,21 @@ describe('the Inbox', () => {
     const items = inboxItems([aRun({ id: 'seen', seenAt: 3500 }), aRun({ id: 'not' })], 4000)
     expect(items.map((one) => one.id)).toEqual(['run:not'])
   })
+  test('an expected red is done, never attention; an expected red that passed asks', () => {
+    const items = inboxItems([aRun({ id: 'red', expect: 'fail' }), aRun({ id: 'surprise', expect: 'fail', state: 'passed', exit: 0 })], 4000)
+    expect(items.map((one) => [one.id, one.state, one.priority, one.label])).toEqual([
+      ['run:red', 'done', 'low', 'Tests failed as expected: pre-push monorepo in p (exit 3)'],
+      ['run:surprise', 'attention', 'normal', 'Tests passed but were expected to fail: pre-push monorepo in p'],
+    ])
+  })
+  test('a failure the session that asked has read is low, not normal, and says so', () => {
+    const [item] = inboxItems([aRun({ askerToldAt: 3500 })], 4000)
+    expect(item).toMatchObject({ state: 'attention', priority: 'low' })
+    expect(item!.detail).toContain('The session that asked for it has read the result.')
+  })
+  test('a superseded failure leaves the Inbox', () => {
+    expect(inboxItems([aRun({ seenAt: 3500, supersededBy: 'r2' })], 4000)).toEqual([])
+  })
   test('item ids and run ids go both ways', () => {
     expect(itemIdOf('r1')).toBe('run:r1')
     expect(runIdOf('run:r1')).toBe('r1')
