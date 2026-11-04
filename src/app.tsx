@@ -165,7 +165,7 @@ export function Screen({
           <Cover state={cover} name="Test runs" onRetry={read} />
         ) : (
           <>
-            {overview ? <Glance runs={runs} machine={overview.machine} now={now()} /> : null}
+            {overview ? <Glance runs={runs} machine={overview.machine} now={now()} width={given ? given.width - (level === 'glance' || level === 'list' ? 16 : 24) : undefined} /> : null}
             {overview && level === 'full' ? <MachineLine overview={overview} /> : null}
             {jumpSaid ? (
               <p className="text-muted-foreground text-xs" role="status" data-testid="jump-said">

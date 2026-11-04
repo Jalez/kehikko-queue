@@ -88,6 +88,8 @@ export interface Result {
   state: Ended
   /** How long it ran, in seconds; 0 for a run cancelled before it started. */
   seconds: number
+  /** When it ended, ms since the epoch. */
+  at: number
 }
 
 /** How many of the latest results the chart shows. */
@@ -100,7 +102,7 @@ export function recentResults(runs: readonly RunView[], most = RESULTS_SHOWN): R
     .sort((a, b) => (b.finishedAt ?? 0) - (a.finishedAt ?? 0))
     .slice(0, most)
     .reverse()
-    .map((run) => ({ id: run.id, label: run.label, state: run.state, seconds: run.startedAt !== null && run.finishedAt !== null ? Math.max(0, Math.round((run.finishedAt - run.startedAt) / 1000)) : 0 }))
+    .map((run) => ({ id: run.id, label: run.label, state: run.state, seconds: run.startedAt !== null && run.finishedAt !== null ? Math.max(0, Math.round((run.finishedAt - run.startedAt) / 1000)) : 0, at: run.finishedAt ?? 0 }))
 }
 
 export function counts(results: readonly Result[]): Record<Ended, number> {
@@ -116,3 +118,100 @@ export function resultsSaid(results: readonly Result[]): string {
   const last = results.at(-1)!
   return `The last ${results.length}: ${parts.join(', ')}. Latest: “${last.label}” ${last.state}.`
 }
+
+/* ---- the tiles in a narrow container ---- */
+
+/*
+ * A tile is three rows, never overlaid: its title and number, a line in words, then the plot at a
+ * height of its own. A narrow tile (under `AXES_FROM`) draws a sparkline, with no axes and no grid; a
+ * wider one adds a y-axis with two ticks, the first and last time, and horizontal gridlines.
+ */
+
+/** From this tile width up, a chart has axes and gridlines; below it, a sparkline. */
+export const AXES_FROM = 260
+/** The plot's own height: a sparkline, and a chart with axes. Both are a comfortable touch target. */
+export const SPARK_HEIGHT = 44
+export const AXES_HEIGHT = 72
+/** The gap between tiles, in px (`gap-2`). */
+export const GAP = 8
+
+export interface TileLayout {
+  /** Tiles side by side: one under 360 px, then three (the grid's container query). */
+  columns: number
+  /** One tile's width, null until measured. */
+  tile: number | null
+  axes: boolean
+  /** The plot's height in px. */
+  plot: number
+}
+
+export function tileLayout(width: number | null): TileLayout {
+  if (width === null || width <= 0) return { columns: 1, tile: null, axes: false, plot: SPARK_HEIGHT }
+  const columns = width < 360 ? 1 : 3
+  const tile = Math.floor((width - GAP * (columns - 1)) / columns)
+  const axes = tile >= AXES_FROM
+  return { columns, tile, axes, plot: axes ? AXES_HEIGHT : SPARK_HEIGHT }
+}
+
+/** Which point a pointer `x` px across a plot `width` px wide is on: the nearest point of a line, the bar it is over. */
+export function indexAt(x: number, width: number, count: number, kind: 'line' | 'bar'): number | null {
+  if (count <= 0 || width <= 0) return null
+  const at = Math.min(1, Math.max(0, x / width))
+  const index = kind === 'line' ? Math.round(at * (count - 1)) : Math.floor(at * count)
+  return Math.min(count - 1, Math.max(0, index))
+}
+
+/** Where a tooltip sits over its plot, so it never runs off the tile: under the point, kept inside. */
+export function tipAlign(index: number, count: number): 'start' | 'center' | 'end' {
+  if (count <= 1) return 'center'
+  const at = index / (count - 1)
+  return at < 1 / 3 ? 'start' : at > 2 / 3 ? 'end' : 'center'
+}
+
+/** The key that moves the point a chart's tooltip is on: the next index, null to close it, undefined for another key. */
+export function stepped(key: string, index: number | null, count: number): number | null | undefined {
+  if (!count) return undefined
+  const from = index ?? count - 1
+  if (key === 'ArrowRight' || key === 'ArrowUp') return Math.min(count - 1, index === null ? from : from + 1)
+  if (key === 'ArrowLeft' || key === 'ArrowDown') return Math.max(0, index === null ? from : from - 1)
+  if (key === 'Home') return 0
+  if (key === 'End') return count - 1
+  if (key === 'Escape') return null
+  return undefined
+}
+
+/** The top of a y-axis: a round number at or above the highest value. */
+export function niceTop(max: number): number {
+  if (!(max > 0)) return 1
+  const power = 10 ** Math.floor(Math.log10(max))
+  for (const step of [1, 2, 2.5, 5, 10]) if (step * power >= max) return Math.round(step * power * 1000) / 1000
+  return 10 * power
+}
+
+/** A tooltip: the value against its limit, what it is, and when. */
+export interface Tip {
+  value: string
+  detail: string
+  at: string
+}
+
+export const clock = (ms: number): string => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
+
+export function queueTip(point: { at: number; running: number }, most: number): Tip {
+  const free = most - point.running
+  return { value: `${point.running}/${most} running`, detail: free > 0 ? `${free} more could start` : 'full: new runs wait', at: clock(point.at) }
+}
+
+export function loadTip(point: Sample, machine: Pick<Machine, 'loadAbove' | 'cores'>): Tip {
+  return {
+    value: `${point.load.toFixed(1)} / ${machine.loadAbove.toFixed(1)} load`,
+    detail: point.load > machine.loadAbove ? `holding new runs · ${machine.cores} cores` : `new runs wait above ${machine.loadAbove.toFixed(1)} · ${machine.cores} cores`,
+    at: clock(point.at),
+  }
+}
+
+export function resultTip(one: Result): Tip {
+  return { value: `“${one.label}” ${one.state}`, detail: one.seconds ? `ran ${seconds(one.seconds)}` : 'did not start', at: one.at ? clock(one.at) : '' }
+}
+
+const seconds = (s: number): string => (s < 60 ? `${s} s` : s < 3600 ? `${Math.floor(s / 60)} min ${s % 60 ? `${s % 60} s` : ''}`.trim() : `${Math.floor(s / 3600)} h ${Math.round((s % 3600) / 60)} min`)
