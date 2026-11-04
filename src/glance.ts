@@ -122,9 +122,11 @@ export function resultsSaid(results: readonly Result[]): string {
 /* ---- the tiles in a narrow container ---- */
 
 /*
- * A tile is three rows, never overlaid: its title and number, a line in words, then the plot at a
- * height of its own. A narrow tile (under `AXES_FROM`) draws a sparkline, with no axes and no grid; a
- * wider one adds a y-axis with two ticks, the first and last time, and horizontal gridlines.
+ * The tiles carry no card of their own: no border, no background, no gap, only a hairline between
+ * them and a tight padding. In one column a tile is a compact row — its title, a line in words and
+ * its number on one line, the plot directly under it, edge to edge. Side by side, the words go on a
+ * line of their own under the title. A narrow tile (under `AXES_FROM`) draws a sparkline, with no
+ * axes and no grid; a wider one adds a y-axis with two ticks, the first and last time, and gridlines.
  */
 
 /** From this tile width up, a chart has axes and gridlines; below it, a sparkline. */
@@ -132,8 +134,15 @@ export const AXES_FROM = 260
 /** The plot's own height: a sparkline, and a chart with axes. Both are a comfortable touch target. */
 export const SPARK_HEIGHT = 44
 export const AXES_HEIGHT = 72
-/** The gap between tiles, in px (`gap-2`). */
-export const GAP = 8
+/** The hairline between tiles, in px: the grid's gap, showing the border colour behind the tiles. */
+export const DIVIDER = 1
+/** A tile's padding, in px: across, and above and below. A plot runs through the padding across. */
+export const PAD_X = 8
+export const PAD_Y = 6
+/** A tile's head row (its title and number) and its line in words, in px; the gap under each row. */
+export const HEAD_HEIGHT = 20
+export const SUB_HEIGHT = 16
+export const ROW_GAP = 2
 
 export interface TileLayout {
   /** Tiles side by side: one under 360 px, then three (the grid's container query). */
@@ -143,14 +152,22 @@ export interface TileLayout {
   axes: boolean
   /** The plot's height in px. */
   plot: number
+  /** One row per tile: title, words and number on one line, the plot under it. */
+  compact: boolean
 }
 
 export function tileLayout(width: number | null): TileLayout {
-  if (width === null || width <= 0) return { columns: 1, tile: null, axes: false, plot: SPARK_HEIGHT }
+  if (width === null || width <= 0) return { columns: 1, tile: null, axes: false, plot: SPARK_HEIGHT, compact: true }
   const columns = width < 360 ? 1 : 3
-  const tile = Math.floor((width - GAP * (columns - 1)) / columns)
+  const tile = Math.floor((width - DIVIDER * (columns - 1)) / columns)
   const axes = tile >= AXES_FROM
-  return { columns, tile, axes, plot: axes ? AXES_HEIGHT : SPARK_HEIGHT }
+  return { columns, tile, axes, plot: axes ? AXES_HEIGHT : SPARK_HEIGHT, compact: columns === 1 }
+}
+
+/** How tall the three tiles stand in one column, in px: three rows and the two hairlines between. */
+export function columnHeight(layout: TileLayout): number {
+  const row = 2 * PAD_Y + HEAD_HEIGHT + ROW_GAP + (layout.compact ? 0 : SUB_HEIGHT + ROW_GAP) + layout.plot
+  return 3 * row + 2 * DIVIDER
 }
 
 /** Which point a pointer `x` px across a plot `width` px wide is on: the nearest point of a line, the bar it is over. */
@@ -161,11 +178,23 @@ export function indexAt(x: number, width: number, count: number, kind: 'line' | 
   return Math.min(count - 1, Math.max(0, index))
 }
 
-/** Where a tooltip sits over its plot, so it never runs off the tile: under the point, kept inside. */
+/** Where a tooltip sits along its plot, so it never runs off the tile: under the point, kept inside. */
 export function tipAlign(index: number, count: number): 'start' | 'center' | 'end' {
   if (count <= 1) return 'center'
   const at = index / (count - 1)
   return at < 1 / 3 ? 'start' : at > 2 / 3 ? 'end' : 'center'
+}
+
+/** The space between a tooltip and its plot, in px. */
+export const TIP_GAP = 4
+
+/**
+ * Whether a tooltip goes above its plot or below it — outside the plot either way, so it never lies
+ * over the chart's own labels. Above when it fits under the top of what clips the page (`room`: the
+ * px from there to the plot's top), else below.
+ */
+export function tipSide(room: number, tipHeight: number): 'above' | 'below' {
+  return room >= tipHeight + TIP_GAP ? 'above' : 'below'
 }
 
 /** The key that moves the point a chart's tooltip is on: the next index, null to close it, undefined for another key. */
@@ -188,30 +217,40 @@ export function niceTop(max: number): number {
   return 10 * power
 }
 
-/** A tooltip: the value against its limit, what it is, and when. */
+/**
+ * A tooltip: three short lines at most. The value first (drawn bold), then what it means or which run
+ * it is, then a muted note — the time of the point. An empty line is left out.
+ */
 export interface Tip {
   value: string
   detail: string
-  at: string
+  note: string
 }
+
+/** The longest line a tooltip holds, in characters: it fits about 15 rem at 12 px without wrapping. */
+export const TIP_LINE_MAX = 28
+
+/** A tooltip's lines, in order, none empty. */
+export const tipLines = (tip: Tip): string[] => [tip.value, tip.detail, tip.note].filter(Boolean)
+
+/** A label cut to fit a tooltip's line. */
+export const clip = (text: string, most = TIP_LINE_MAX): string => (text.length <= most ? text : `${text.slice(0, most - 1).trimEnd()}…`)
 
 export const clock = (ms: number): string => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
 
 export function queueTip(point: { at: number; running: number }, most: number): Tip {
   const free = most - point.running
-  return { value: `${point.running}/${most} running`, detail: free > 0 ? `${free} more could start` : 'full: new runs wait', at: clock(point.at) }
+  return { value: `${point.running} / ${most} running`, detail: free > 0 ? `${free} more can start` : 'Full: new runs wait', note: clock(point.at) }
 }
 
-export function loadTip(point: Sample, machine: Pick<Machine, 'loadAbove' | 'cores'>): Tip {
-  return {
-    value: `${point.load.toFixed(1)} / ${machine.loadAbove.toFixed(1)} load`,
-    detail: point.load > machine.loadAbove ? `holding new runs · ${machine.cores} cores` : `new runs wait above ${machine.loadAbove.toFixed(1)} · ${machine.cores} cores`,
-    at: clock(point.at),
-  }
+export function loadTip(point: Sample, machine: Pick<Machine, 'loadAbove'>): Tip {
+  return { value: `Load ${point.load.toFixed(1)}`, detail: point.load > machine.loadAbove ? 'Holding new runs' : `Runs wait above ${machine.loadAbove.toFixed(1)}`, note: clock(point.at) }
 }
+
+const ENDED: Record<Ended, string> = { passed: 'Passed', failed: 'Failed', cancelled: 'Cancelled' }
 
 export function resultTip(one: Result): Tip {
-  return { value: `“${one.label}” ${one.state}`, detail: one.seconds ? `ran ${seconds(one.seconds)}` : 'did not start', at: one.at ? clock(one.at) : '' }
+  return { value: one.seconds ? `${ENDED[one.state]} in ${seconds(one.seconds)}` : one.state === 'cancelled' ? 'Cancelled before start' : ENDED[one.state], detail: clip(one.label), note: one.at ? clock(one.at) : '' }
 }
 
 const seconds = (s: number): string => (s < 60 ? `${s} s` : s < 3600 ? `${Math.floor(s / 60)} min ${s % 60 ? `${s % 60} s` : ''}`.trim() : `${Math.floor(s / 3600)} h ${Math.round((s % 3600) / 60)} min`)
