@@ -3,7 +3,7 @@ import { statSync } from 'node:fs'
 
 import { EPIC_SLUG, LIMITS, readTrackerRef } from 'kehikot-module-protocol'
 
-import type { Expect } from './attention.ts'
+import type { Expect } from './expect.ts'
 import { ARGV_BYTES_MOST, ARGV_MOST, LABEL_MOST, RUN_KINDS, type Kind } from './queue.ts'
 
 /**

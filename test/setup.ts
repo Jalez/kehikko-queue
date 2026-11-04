@@ -21,3 +21,11 @@ process.on('exit', () => rmSync(SCRATCH, { recursive: true, force: true }))
 const own = { fetch: globalThis.fetch, Request: globalThis.Request, Response: globalThis.Response, Headers: globalThis.Headers }
 GlobalRegistrator.register()
 Object.assign(globalThis, own)
+
+/* A chart measures its box, and happy-dom lays nothing out: every chart would say its box is 0 × 0.
+   That one warning is dropped; the charts' words are what the tests read. */
+const warn = console.warn
+console.warn = (...args: unknown[]) => {
+  if (typeof args[0] === 'string' && args[0].startsWith('The width(0) and height(0) of chart')) return
+  warn(...args)
+}

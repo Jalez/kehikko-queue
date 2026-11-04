@@ -21,6 +21,8 @@ what follows is how THIS repository is built, and the rules a change here keeps.
 | `store.ts` | The only write into a project: run results, `.kehikot/queue/runs.json`. |
 | `bin/kehikot-queue(.ts)`, `hooks/pre-push` | The CLI for shells and hooks; the hook snippet. |
 | `src/app.tsx`, `src/inbox.ts`, `src/header.ts` | The page, the Inbox items, the header switch. |
+| `src/glance.ts`, `src/components/glance.tsx`, `src/use-box.ts` | What the page says at a glance and how much more it shows at each container size (`levelOf`, pure); the three tiles and their charts (shadcn's chart, `src/components/ui/chart.tsx`); the container's measured size. |
+| `queue/strain.ts`, `queue/expect.ts` | The load sampled at the queue's own look at it, for the strain chart (memory only); what the asker said a run should come to. |
 | `serve.ts`, `build.ts` | The built page on Bun (ready-built); Vite in a checkout. Both take `isOurs` from `doors.ts`: add a path there, never in one of them (`test/serves.test.ts`). |
 
 ## The rules
@@ -43,9 +45,13 @@ what follows is how THIS repository is built, and the rules a change here keeps.
 - **Agents never press what is a person's.** `agents: true` goes only on a
   harmless switch, toggle or jump; never on a run that writes, sends or
   deletes, never on a `confirm` run.
-- **The Inbox is one record.** Report what needs the person with
-  `host.activity(items)`, whole, every time it changes; keep no list of
-  notices of your own.
+- **The Inbox is one record.** Report the runs with `host.activity(items)`,
+  whole, every time it changes; keep no list of notices of your own. No result
+  needs the person (issue #19): never `attention`, every item `low`.
+- **Small first.** The page fits at 200, 280 and 380 pixels wide and a short
+  container. A short one shows only the glance; more comes with room (`levelOf`
+  from the container's measured size, never the window). Every chart has its
+  numbers in words beside it and its sentence as its label.
 - **Ask only for what is called.** Each method needs its capability in
   `declares.uses`; nothing else goes there.
 - **Kehikot says when it and the module do not fit.** Write no code for this.

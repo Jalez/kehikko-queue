@@ -2,12 +2,20 @@ import { answered, ask, subscribe } from 'kehikot-module-protocol/client'
 
 import type { RunView } from '../../queue/queue.ts'
 
+/** One look at the machine's 1-minute load: `at` in ms since the epoch. */
+export interface Sample {
+  at: number
+  load: number
+}
+
 export interface Machine {
   cores: number
   load: number
   most: number
   loadAbove: number
   waitMinutes: number
+  /** The load over the last few minutes, oldest first; empty from a server that does not sample. */
+  samples?: Sample[]
 }
 
 export interface Overview {
@@ -27,13 +35,6 @@ export interface Api {
   output(id: string, from: number): Promise<Output>
   cancel(id: string): Promise<Overview>
   move(id: string, to: 'up' | 'down' | 'top'): Promise<Overview>
-  /**
-   * The person was shown this run (its output opened, or it was in view), or pressed Mark as seen
-   * (`marked`): it stops asking for them.
-   */
-  seen(id: string, marked?: boolean): Promise<Overview>
-  /** Mark as seen every run that still asks, of one project, or of every one with null. */
-  seenAll(project: string | null): Promise<Overview>
   /**
    * Hear when the queue changed: once as the stream opens (and again each time it reopens — after a
    * drop, or when the page is shown again), then at every change. Never on a clock; closed while the
@@ -58,12 +59,6 @@ export const api: Api = {
   outputChanges: (id, onChange) => subscribe('./api/output/events', () => onChange(), { query: { id }, probe: true }),
   async cancel(id) {
     return overview(answered(await ask<{ runs?: RunView[]; machine?: Machine }>('./api/act', { body: { op: 'cancel', id } })))
-  },
-  async seen(id, marked) {
-    return overview(answered(await ask<{ runs?: RunView[]; machine?: Machine }>('./api/act', { body: { op: 'seen', id, ...(marked ? { marked: true } : {}) } })))
-  },
-  async seenAll(project) {
-    return overview(answered(await ask<{ runs?: RunView[]; machine?: Machine }>('./api/act', { body: { op: 'seen-all', ...(project ? { project } : {}) } })))
   },
   async move(id, to) {
     return overview(answered(await ask<{ runs?: RunView[]; machine?: Machine }>('./api/act', { body: { op: 'move', id, to } })))

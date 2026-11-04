@@ -66,7 +66,7 @@ export const DECLARED: Manifest = manifestSchema.parse({
   partless: 'A test run is this computer\'s, for a change or an issue, never for a part of an epic.',
   declares: {
     protocol: `>=${PROTOCOL} <${PROTOCOL + 1}`,
-    /* Only what is called. activity:report for `activity.set`: a finished run is in the Inbox, a failed one needs you.
+    /* Only what is called. activity:report for `activity.set`: every run of the last day is in the Inbox, quietly: nothing needs the person.
        view:navigate for `view.goto`: the jump-into button on a run. */
     uses: ['activity:report', 'view:navigate'],
     /* The jump-into button's view.goto carries the run's project (when it is not the open one) and

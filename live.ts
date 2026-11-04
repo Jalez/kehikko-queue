@@ -12,7 +12,8 @@ import { events, publish, watching, type Stream } from 'kehikot-module-protocol/
  *   from the queue's own `changed` (`runsChanged`). The queue's existing look at the load (`tick`, its
  *   scheduling) also publishes when what a waiting run says has changed ("the machine's load is 3.1 …,
  *   or in 4 minutes anyway"), which moves with the load and the clock and with no run changing
- *   (`waitingMoved`). Nothing is published while nothing waits and nothing changes.
+ *   (`waitingMoved`), and when the load itself has moved by a tenth (`loadMoved`), for the strain
+ *   chart. Nothing is published while no page follows the queue.
  * - **A run's output** (`/api/output/events?id=…`, topic `output:<id>`): the run writes its log
  *   itself (its own process, straight into the file, so that it outlives a restart of this module).
  *   While a page follows one that is running, the server watches that log file and looks at its size
@@ -65,6 +66,19 @@ export function waitingMoved(said: () => string): void {
   const now = said()
   if (now === waitingWas) return
   waitingWas = now
+  runsChanged()
+}
+
+let loadWas: string | null = null
+/**
+ * After the queue's look at the load: publish when the load, to one decimal, has moved, so the page's
+ * strain chart follows it. `load` is asked only while a page follows the queue.
+ */
+export function loadMoved(load: () => number): void {
+  if (watching(RUNS_TOPIC) === 0) return
+  const now = load().toFixed(1)
+  if (now === loadWas) return
+  loadWas = now
   runsChanged()
 }
 
