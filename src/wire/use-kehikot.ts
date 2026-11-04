@@ -13,7 +13,7 @@ import { ID } from '../../manifest.ts'
  */
 export interface Host
   extends Pick<ProtocolHost, 'where' | 'project' | 'projectPath' | 'projectId' | 'epic' | 'parts' | 'theme' | 'header' | 'activity' | 'request'>,
-    Partial<Pick<ProtocolHost, 'workingScope' | 'visible'>> {
+    Partial<Pick<ProtocolHost, 'workingScope' | 'visible' | 'footer' | 'drawsFooter'>> {
   /** The names of the parts of the epic picked in the host's bar. Empty is the whole epic. */
   picked: string[]
 }
