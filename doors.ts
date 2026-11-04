@@ -17,11 +17,11 @@ import { projectOf, publish } from './store.ts'
 import { argvOf, cwdOf, epicOf, expectOf, kindOf, labelOf, refsOf } from './queue/asks.ts'
 import { runEnv } from './queue/env.ts'
 import { originFromCwd, originFromPlace } from './queue/origin-find.ts'
-import { makeStream, runsChanged, waitingMoved } from './live.ts'
+import { loadMoved, makeStream, runsChanged, waitingMoved } from './live.ts'
+import { Strain } from './queue/strain.ts'
 import { logFile } from './queue/runner.ts'
 import { cliToken, logsDir, queueDir } from './queue/machine.ts'
 import { ended, Queue, type Asker, type Run, type RunView } from './queue/queue.ts'
-import { asExpected } from './queue/attention.ts'
 import { minutes, type Move } from './queue/schedule.ts'
 import { SETTINGS, capacityOf, cores, loadNow, readValues, writeValue } from './queue/settings.ts'
 
@@ -46,15 +46,25 @@ export const ASK: { options: HostHasProjectOptions } = { options: {} }
 /** Where the queue keeps its state. Read once: a process has one queue. */
 export const DIR = queueDir()
 
+/** The load over the last few minutes, sampled at the queue's own look at it: what the page's strain chart draws. */
+export const STRAIN = new Strain()
+
 /**
  * How a queue tells the page (`live.ts`): every change of a run, and, after each look at the load,
- * what the waiting runs say when it has moved. The page is told, never left to ask.
+ * what the waiting runs say when it has moved. With `load`, that look also samples the load for the
+ * strain chart and tells the page when it moved. The page is told, never left to ask.
  */
-export const toldOf = (get: () => Queue | null) => ({
+export const toldOf = (get: () => Queue | null, load?: () => number) => ({
   changed: runsChanged,
-  /* Only what the WAITING runs say: a run that is not waiting has none, and counting it would
-     tell the page "something moved" on every tick that merely has runs in the list. */
-  ticked: () => waitingMoved(() => get()?.list().filter((run) => run.state === 'queued').map((run) => run.waiting ?? '').join('\n') ?? ''),
+  ticked: () => {
+    /* Only what the WAITING runs say: a run that is not waiting has none, and counting it would
+       tell the page "something moved" on every tick that merely has runs in the list. */
+    waitingMoved(() => get()?.list().filter((run) => run.state === 'queued').map((run) => run.waiting ?? '').join('\n') ?? '')
+    if (!load) return
+    const now = load()
+    STRAIN.add(Date.now(), now)
+    loadMoved(() => now)
+  },
 })
 
 /** The one queue of this process. Tests make their own with `new Queue`. */
@@ -69,7 +79,7 @@ export function queue(): Queue {
     publish: (project, runs) => {
       publish(project, runs)
     },
-    ...toldOf(() => held),
+    ...toldOf(() => held, loadNow),
     tickMs: 5000,
   })
   return held
@@ -113,10 +123,11 @@ export function runSaid(run: RunView): string {
   if (run.state === 'queued') lines.push(`  ${run.waiting ?? 'Waiting.'} Asked ${at(run.queuedAt)}.`)
   if (run.state === 'running') lines.push(`  Running since ${at(run.startedAt)} (waited ${took(run.queuedAt, run.startedAt)}${run.overdue ? ', started past the load guard after its longest wait' : ''}).`)
   if (ended(run.state)) lines.push(`  Ended ${at(run.finishedAt)}: waited ${took(run.queuedAt, run.startedAt ?? run.finishedAt)}, ran ${took(run.startedAt, run.finishedAt) || '0 s'}.${run.why ? ` ${run.why}` : ''}`)
-  if (run.supersededBy) lines.push(`  Superseded by ${run.supersededBy}, a later passing run of the same work.`)
-  else if ((run.state === 'failed' || run.state === 'passed') && !asExpected(run) && run.seenAt) lines.push(`  Marked seen${run.seenBy === 'agent' ? ' by the session that asked for it' : run.seenBy === 'person' ? ' by the person' : ''}.`)
   return lines.join('\n')
 }
+
+/** What `queue_seen`, which 0.6.0 had, answers now: nothing to do, and no error. */
+export const SEEN_GONE = 'Nothing to mark: Test runs no longer asks the person about results, passed or failed. Each run\'s result stays on the Test runs page.'
 
 /** What came of an ended run, with the end of its output: more of it for a failure. */
 export function resultSaid(q: Queue, run: Run): string {
@@ -161,7 +172,7 @@ export function tools() {
           expect: {
             type: 'string',
             enum: ['fail'],
-            description: '"fail" when the run is MEANT to fail (a red test written before the fix): its failure then asks nobody ("failed as expected"), and a pass asks the person ("expected to fail but passed"). Its exit code is still the command\'s own.',
+            description: '"fail" when the run is MEANT to fail (a red test written before the fix): its failure is then said as "failed as expected", and a pass as "passed, but it was expected to fail". Its exit code is still the command\'s own.',
           },
           ...PLACE_ARGS,
         },
@@ -205,23 +216,6 @@ export function tools() {
         required: ['id'],
       },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
-    },
-    {
-      name: 'queue_seen',
-      description:
-        'Say you have handled a failure of YOURS, so it stops asking the person in the Inbox: one run by id, or, with all: true, every '
-        + 'failure of the runs this conversation\'s place asked for. The run stays in the list. Use it once you have read a failure and '
-        + 'dealt with it (fixed it, or decided it is not a problem); a later passing run of the same work clears it by itself. Yours is one '
-        + 'asked for by this conversation\'s place, or one whose key (from queue_run) you pass.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          id: { type: 'string', description: 'The run\'s id.' },
-          all: { type: 'boolean', description: 'Every failure of your own runs, instead of one.' },
-          key: { type: 'string', description: 'The key queue_run answered, when this conversation has no place.' },
-        },
-      },
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
   ]
 }
@@ -274,8 +268,6 @@ async function call(name: string, args: Record<string, unknown>, query: URLSearc
     if (!Number.isFinite(seconds) || seconds < 0) throw new Error('timeout_seconds is a number of seconds.')
     const run = await q.wait(id, Math.min(seconds, 1800) * 1000)
     if (!run) throw new Error(`There is no run ${id}.`)
-    /* The session that asked has now read what came of it: its failure asks the person less loudly. */
-    if (ended(run.state)) q.told(id, { key: typeof args.key === 'string' ? args.key : null, token })
     return resultSaid(q, run)
   }
 
@@ -286,18 +278,9 @@ async function call(name: string, args: Record<string, unknown>, query: URLSearc
     return `Cancelled ${id}.`
   }
 
-  if (name === 'queue_seen') {
-    const key = typeof args.key === 'string' ? args.key : null
-    if (args.all === true) {
-      if (!token) throw new Error('all: true marks the runs this conversation\'s place asked for, and this conversation has no place. Pass id (and key) for one run.')
-      const marked = q.seenAll({ token })
-      return marked.length ? `Marked ${marked.length} failure${marked.length === 1 ? '' : 's'} seen: ${marked.join(', ')}.` : 'None of your runs needed the person.'
-    }
-    if (!id) throw new Error('queue_seen takes id, or all: true.')
-    const refused = q.seen(id, { key, token })
-    if (refused) throw new Error(refused)
-    return `${id} no longer asks the person.`
-  }
+  /* 0.6.0's tool, gone with the Inbox asking about results. A session that still calls it is told so, not refused. */
+  if (name === 'queue_seen') return SEEN_GONE
+
 
   if (name === 'queue_run') {
     const place = await resolveDoorPlace(query, ASK.options)
@@ -344,7 +327,7 @@ async function call(name: string, args: Record<string, unknown>, query: URLSearc
     ].filter(Boolean).join('\n')
   }
 
-  throw new Error(`There is no tool "${name.slice(0, 60)}" here. This door has queue_run, queue_status, queue_wait, queue_cancel and queue_seen.`)
+  throw new Error(`There is no tool "${name.slice(0, 60)}" here. This door has queue_run, queue_status, queue_wait and queue_cancel.`)
 }
 
 interface Rpc {
@@ -386,7 +369,11 @@ const settings = settingsDoor({
 /** What the page reads: every run, and the machine as the queue sees it. */
 export function overview(q: Queue) {
   const capacity = capacityOf(readValues(DIR), cores())
-  return { ok: true, runs: q.list(), machine: { cores: cores(), load: loadNow(), most: capacity.most, loadAbove: capacity.loadAbove, waitMinutes: capacity.waitMs / 60_000 } }
+  return {
+    ok: true,
+    runs: q.list(),
+    machine: { cores: cores(), load: loadNow(), most: capacity.most, loadAbove: capacity.loadAbove, waitMinutes: capacity.waitMs / 60_000, samples: STRAIN.list() },
+  }
 }
 
 export async function answer(
@@ -441,16 +428,7 @@ export async function answer(
       const no = q.move(id, body.to as Move)
       return no ? bad(no) : ok(overview(q))
     }
-    if (body?.op === 'seen') {
-      /* `marked`: the person pressed Mark as seen; else it was shown to them (opened, or in view). */
-      const no = q.seen(id, body.marked === true ? { person: true } : undefined)
-      return no ? bad(no) : ok(overview(q))
-    }
-    if (body?.op === 'seen-all') {
-      q.seenAll({ person: true }, typeof body.project === 'string' ? body.project : null)
-      return ok(overview(q))
-    }
-    return bad('An act is cancel (id), move (id, to: up, down or top), seen (id) or seen-all (project).')
+    return bad('An act is cancel (id) or move (id, to: up, down or top).')
   }
 
   if (path.startsWith('/api/')) return bad('Not here.', 404)

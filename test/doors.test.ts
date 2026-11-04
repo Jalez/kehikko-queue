@@ -5,7 +5,8 @@ import { join } from 'node:path'
 
 import { beforeInfo } from 'kehikot-module-protocol/serve'
 
-import { ASK, TICKET, answer, mcp, mcpAsker, tools } from '../doors.ts'
+import { ASK, SEEN_GONE, STRAIN, TICKET, answer, mcp, mcpAsker, overview, toldOf, tools } from '../doors.ts'
+import { Strain } from '../queue/strain.ts'
 import { cliDoor, TOKEN_HEADER } from '../queue/cli-door.ts'
 import { Queue } from '../queue/queue.ts'
 
@@ -96,8 +97,8 @@ const placeFetch = (async (url: string | URL | Request) => {
 }) as typeof fetch
 
 describe('the MCP door', () => {
-  test('offers the five tools', () => {
-    expect(tools().map((one) => one.name)).toEqual(['queue_run', 'queue_status', 'queue_wait', 'queue_cancel', 'queue_seen'])
+  test('offers the four tools', () => {
+    expect(tools().map((one) => one.name)).toEqual(['queue_run', 'queue_status', 'queue_wait', 'queue_cancel'])
   })
   test('queue_run takes the session and epic from its place; queue_wait answers the exit code and the output', async () => {
     ASK.options = { fetch: placeFetch, env: { KEHIKOT_ORIGINS: 'http://127.0.0.1:9' } }
@@ -135,34 +136,18 @@ describe('the MCP door', () => {
   })
 })
 
-describe('clearing a failure from the MCP door', () => {
+describe('results and the MCP door', () => {
   const idOf = (text: string) => /Queued (r[0-9a-z]+)/.exec(text)![1]!
-  test('queue_wait handing a failure to the session that asked lowers it; anyone else\'s wait does not', async () => {
-    ASK.options = { fetch: placeFetch, env: { KEHIKOT_ORIGINS: 'http://127.0.0.1:9' } }
-    const id = idOf((await call('queue_run', { command: ['sh', '-c', 'exit 2'], cwd: tmpdir() }, `kehikot-place=${PLACE}`)).text)
-    await call('queue_wait', { id, timeout_seconds: 10 })
-    expect(q.get(id)?.askerToldAt ?? null).toBeNull()
-    await call('queue_wait', { id, timeout_seconds: 10 }, `kehikot-place=${PLACE}`)
-    expect(q.get(id)?.askerToldAt).toBeNumber()
-    expect(q.get(id)?.seenAt ?? null).toBeNull()
-  })
-  test('queue_seen marks one of your own failures, never another\'s; all: true marks every one of yours', async () => {
-    ASK.options = { fetch: placeFetch, env: { KEHIKOT_ORIGINS: 'http://127.0.0.1:9' } }
-    const a = idOf((await call('queue_run', { command: ['sh', '-c', 'exit 2'], cwd: tmpdir(), label: 'a' }, `kehikot-place=${PLACE}`)).text)
-    const b = idOf((await call('queue_run', { command: ['sh', '-c', 'exit 2'], cwd: tmpdir(), label: 'b' }, `kehikot-place=${PLACE}`)).text)
-    const other = await call('queue_run', { command: ['sh', '-c', 'exit 2'], cwd: tmpdir(), label: 'c' })
-    const [, c, key] = /Queued (r[0-9a-z]+) \(key ([A-Za-z0-9_-]+)\)/.exec(other.text)!
-    for (const id of [a, b, c!]) await q.wait(id, 10_000)
-    expect((await call('queue_seen', { id: c! }, `kehikot-place=${PLACE}`)).text).toContain('not yours')
-    expect(q.get(c!)?.seenAt ?? null).toBeNull()
-    expect((await call('queue_seen', { id: a }, `kehikot-place=${PLACE}`)).text).toContain('no longer asks')
-    expect(q.get(a)).toMatchObject({ seenBy: 'agent', seenAt: expect.any(Number) })
-    expect((await call('queue_seen', { all: true }, `kehikot-place=${PLACE}`)).text).toContain('Marked 1 failure seen')
-    expect(q.get(b)?.seenAt).toBeNumber()
-    expect(q.get(c!)?.seenAt ?? null).toBeNull()
-    expect((await call('queue_seen', { all: true })).error).toBe(true)
-    expect((await call('queue_seen', { id: c!, key: key! })).error).toBe(false)
-    expect(q.get(c!)?.seenAt).toBeNumber()
+  test('queue_seen, gone with the Inbox asking about results, answers harmlessly and changes nothing', async () => {
+    const id = idOf((await call('queue_run', { command: ['sh', '-c', 'exit 2'], cwd: tmpdir() })).text)
+    await q.wait(id, 10_000)
+    const before = JSON.stringify(q.get(id))
+    for (const args of [{ id }, { all: true }, {}]) {
+      const said = await call('queue_seen', args, `kehikot-place=${PLACE}`)
+      expect(said.error).toBe(false)
+      expect(said.text).toBe(SEEN_GONE)
+    }
+    expect(JSON.stringify(q.get(id))).toBe(before)
   })
   test('queue_run takes expect: fail, and refuses another word', async () => {
     const ran = await call('queue_run', { command: ['sh', '-c', 'exit 1'], cwd: tmpdir(), expect: 'fail' })
@@ -180,6 +165,25 @@ describe('clearing a failure from the MCP door', () => {
   })
 })
 
+describe('the strain on the machine', () => {
+  test('the queue\'s look at the load samples it, and the page reads the samples with the runs', () => {
+    toldOf(() => q, () => 2.345).ticked()
+    const { machine } = overview(q)
+    expect(machine.samples.at(-1)).toMatchObject({ load: 2.35, at: expect.any(Number) })
+    expect(machine.samples).toEqual(STRAIN.list())
+  })
+  test('a queue told without a load samples nothing', () => {
+    const before = STRAIN.list().length
+    toldOf(() => q).ticked()
+    expect(STRAIN.list().length).toBe(before)
+  })
+  test('keeps the last few minutes only, and no load that is not a number', () => {
+    const strain = new Strain(3)
+    for (const [at, load] of [[1, 1], [2, Number.NaN], [3, 2], [4, 3], [5, 4]] as const) strain.add(at, load)
+    expect(strain.list()).toEqual([{ at: 3, load: 2 }, { at: 4, load: 3 }, { at: 5, load: 4 }])
+  })
+})
+
 describe('the page\'s writes', () => {
   test('cancel and move need the page\'s ticket', async () => {
     const run = q.enqueue({ argv: ['sh', '-c', 'sleep 5'], cwd: tmpdir(), env: {}, kind: 'other', label: 'x', refs: [], epic: null, project: null, asker: { via: 'cli', said: 'a test', token: null, conversation: null } })
@@ -189,27 +193,10 @@ describe('the page\'s writes', () => {
     expect(done?.status).toBe(200)
     expect(q.get(run.id)?.state).toBe('cancelled')
   })
-  test('seen needs the page\'s ticket', async () => {
+  test('the acts are cancel and move: seen and seen-all, 0.6.0\'s, are refused', async () => {
     const run = q.enqueue({ argv: ['sh', '-c', 'exit 1'], cwd: tmpdir(), env: {}, kind: 'other', label: 'x', refs: [], epic: null, project: null, asker: { via: 'cli', said: 'a test', token: null, conversation: null } })
     await q.wait(run.id, 10_000)
-    const refused = await answer('POST', '/api/act', new URLSearchParams(), { op: 'seen', id: run.id }, null, q)
-    expect(refused?.status).toBe(403)
-    expect(q.get(run.id)?.seenAt ?? null).toBeNull()
-    const done = await answer('POST', '/api/act', new URLSearchParams(), { op: 'seen', id: run.id }, TICKET, q)
-    expect(done?.status).toBe(200)
-    expect(q.get(run.id)?.seenAt).toBeNumber()
-  })
-  test('Mark as seen and Mark all seen need the page\'s ticket; all seen keeps to the project asked', async () => {
-    const failing = (project: string | null) => q.enqueue({ argv: ['sh', '-c', 'exit 1'], cwd: tmpdir(), env: {}, kind: 'other', label: 'x', refs: [], epic: null, project, asker: { via: 'cli', said: 'a test', token: null, conversation: null } })
-    const one = failing('/a')
-    const two = failing('/a')
-    const three = failing('/b')
-    for (const run of [one, two, three]) await q.wait(run.id, 10_000)
-    expect((await answer('POST', '/api/act', new URLSearchParams(), { op: 'seen-all', project: '/a' }, null, q))?.status).toBe(403)
-    expect((await answer('POST', '/api/act', new URLSearchParams(), { op: 'seen', id: one.id, marked: true }, TICKET, q))?.status).toBe(200)
-    expect(q.get(one.id)?.seenBy).toBe('person')
-    expect((await answer('POST', '/api/act', new URLSearchParams(), { op: 'seen-all', project: '/a' }, TICKET, q))?.status).toBe(200)
-    expect(q.get(two.id)?.seenAt).toBeNumber()
-    expect(q.get(three.id)?.seenAt ?? null).toBeNull()
+    expect((await answer('POST', '/api/act', new URLSearchParams(), { op: 'seen', id: run.id }, TICKET, q))?.status).toBe(400)
+    expect((await answer('POST', '/api/act', new URLSearchParams(), { op: 'seen-all' }, TICKET, q))?.status).toBe(400)
   })
 })

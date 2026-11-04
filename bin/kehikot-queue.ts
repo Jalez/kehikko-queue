@@ -11,8 +11,8 @@
  * like a secret, unless named with --keep-env), prints where it is in the queue while it waits,
  * prints the command's output as it runs, and exits with the command's own exit code. Ctrl-C while
  * waiting cancels the run. `--expect fail` says the run is meant to fail (a red test written before
- * the fix): its failure then asks nobody in Kehikot's Inbox, and a pass does. The exit code is still
- * the command's own.
+ * the fix): its failure is then said "as expected", and a pass "but it was expected to fail". The
+ * exit code is still the command's own.
  *
  * When Test runs is not running, or will not take the run, the command runs here, now, outside the
  * queue, and this says so: a hook never breaks because the queue is away.

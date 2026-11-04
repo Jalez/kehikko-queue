@@ -12,13 +12,19 @@ waits in Test runs and starts when there is room; whoever asked waits for its ow
 - **Who goes first.** A `push` (a pre-push hook a person is waiting on) before `verify`, `review` and
   `other`; first come first served within each. You can move a waiting run up, down or to the top,
   and cancel any run, on the page.
-- **What you see.** Waiting, running and finished runs, each with the session and epic it came from,
-  the change or issue it is for, how long it waited and ran, and its result. A failed run opens its output.
-- **The Inbox.** Every run of the last day is in Kehikot's Inbox under its project and the place it
-  was asked from: a failure needs you, a pass is done. A failure says which run it is (its label,
-  branch or folder, and who started it). Opening it from the Inbox shows that run here, with its
-  output open; once you have seen it (from the Inbox, or by opening its output) it leaves the Inbox
-  and stays in the list. Until then its row has an outlined border and says "Needs your attention".
+- **At a glance.** The top of the page is three tiles, each a number in words and a small live chart:
+  the queue (running of the most at once, and waiting; the chart is the last 30 minutes), the strain
+  (the 1-minute load against the limit above which new runs wait; the last 5 minutes), and the latest
+  results (passed, failed; one bar per run, as tall as it ran). A short container shows only these.
+- **More as the container grows.** Narrow or short, one line per run, which opens its drawer (details,
+  output, cancel). With room, each run's row with its kind, the jump into where it came from, its
+  buttons and its output; roomier still, the session and epic it came from, the change or issue it is
+  for, how long it waited and ran, and the machine's limits in words. It follows the container's own
+  size, not the window's.
+- **The Inbox, quietly.** Every run of the last day is in Kehikot's Inbox under its project and the
+  place it was asked from, as low-priority news: waiting and running runs are working, and a run that
+  ended is done, passed or failed. No result ever asks for your attention; whether it passed is in
+  its line and on this page. Opening one from the Inbox shows that run here, with its output open.
 - **Run results for other modules.** Each project's runs are published as the protocol's run results
   (2.27.0), so a module showing a change can show whether its tests pass, without either naming the other.
 - **Pass or fail is the command's own.** The command runs as given, in the folder it was asked in,
@@ -72,6 +78,11 @@ The command gets no input (a pre-push hook's list of refs on stdin is not passed
 - `queue_wait` — waits up to `timeout_seconds` (240, at most 1800) and answers passed or failed, the
   exit code, the times and the end of the output (more of it for a failure).
 - `queue_cancel` — your own runs: those of this conversation's place, or with the key.
+
+`queue_run` and the CLI take `expect: 'fail'` (`--expect fail`) for a run meant to fail, a red test
+written before the fix: its result is then said "failed as expected", or "passed, but it was expected
+to fail". 0.6.0's `queue_seen` is gone with the Inbox asking about results; a session that still calls
+it is told there is nothing to mark.
 
 `/queue` (a skill) asks an agent to run this work's tests through the queue and report.
 

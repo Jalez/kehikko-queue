@@ -241,110 +241,29 @@ describe('the environment a run gets', () => {
   })
 })
 
-describe('a failure shown to the person', () => {
-  test('is marked seen once, keeps its place in the list, and is kept across a restart', async () => {
-    const dir = scratch()
-    let now = 1_000
-    const q = queue({ dir, clock: () => now })
-    const run = q.enqueue(ask(['sh', '-c', 'exit 2']))
-    await q.wait(run.id, 10_000)
-    expect(q.get(run.id)?.seenAt ?? null).toBeNull()
-    now = 5_000
-    expect(q.seen(run.id)).toBeNull()
-    expect(q.get(run.id)?.seenAt).toBe(5_000)
-    now = 9_000
-    expect(q.seen(run.id)).toBeNull()
-    expect(q.get(run.id)?.seenAt).toBe(5_000)
-    expect(q.list().map((one) => one.id)).toContain(run.id)
-    q.stop()
-    expect(queue({ dir, clock: () => now }).get(run.id)?.seenAt).toBe(5_000)
-  })
-  test('a run that did not fail has nothing to see, and an unknown run is said', async () => {
+describe('results never ask for the person', () => {
+  test('a failure, a pass and an expected red are all quiet in the Inbox, and keep the command\'s own result', async () => {
     const q = queue()
-    const run = q.enqueue(ask(['sh', '-c', 'exit 0']))
-    await q.wait(run.id, 10_000)
-    expect(q.seen(run.id)).toBeNull()
-    expect(q.get(run.id)?.seenAt ?? null).toBeNull()
-    expect(q.seen('nope')).toBe('There is no such run.')
-  })
-})
-
-describe('clearing what asks for the person', () => {
-  const origin = (branch: string) => ({ project: '/p', projectId: null, projectName: null, epic: 'queue', parts: [], kehikko: null, kehikkoName: null, session: null, branch })
-  test('a failure, then a passing run on the same branch: no attention row, and it says what superseded it', async () => {
-    const cwd = scratch()
-    const q = queue()
-    const red = q.enqueue(ask(['sh', '-c', 'exit 1'], { cwd, label: '#2636 final', project: '/p', origin: origin('fix') }))
-    await q.wait(red.id, 10_000)
-    expect(inboxItems(q.list(), Date.now()).find((one) => one.id === `run:${red.id}`)?.state).toBe('attention')
-    const green = q.enqueue(ask(['sh', '-c', 'exit 0'], { cwd, label: '#2636 final (rerun)', project: '/p', origin: origin('fix') }))
-    await q.wait(green.id, 10_000)
-    expect(q.get(red.id)).toMatchObject({ supersededBy: green.id, seenAt: expect.any(Number) })
-    expect(inboxItems(q.list(), Date.now()).filter((one) => one.state === 'attention')).toEqual([])
-  })
-  test('a pass on another branch leaves the failure asking', async () => {
-    const cwd = scratch()
-    const q = queue()
-    const red = q.enqueue(ask(['sh', '-c', 'exit 1'], { cwd, origin: origin('fix') }))
-    await q.wait(red.id, 10_000)
-    await q.wait(q.enqueue(ask(['sh', '-c', 'exit 0'], { cwd, origin: origin('main') })).id, 10_000)
-    expect(q.get(red.id)?.seenAt ?? null).toBeNull()
-  })
-  test('Mark as seen removes it from the Inbox, and that survives a restart', async () => {
-    const dir = scratch()
-    const q = queue({ dir })
-    const red = q.enqueue(ask(['sh', '-c', 'exit 1'], { project: '/p' }))
-    await q.wait(red.id, 10_000)
-    expect(q.seen(red.id, { person: true })).toBeNull()
-    expect(q.get(red.id)?.seenBy).toBe('person')
-    expect(inboxItems(q.list(), Date.now())).toEqual([])
-    q.stop()
-    const again = queue({ dir })
-    expect(again.get(red.id)).toMatchObject({ seenBy: 'person', seenAt: expect.any(Number) })
-    expect(inboxItems(again.list(), Date.now())).toEqual([])
-  })
-  test('an expected red asks nobody; an expected red that passes does', async () => {
-    const q = queue()
-    const red = q.enqueue(ask(['sh', '-c', 'exit 1'], { project: '/p', label: 'C2 RED', expect: 'fail' }))
+    const red = q.enqueue(ask(['sh', '-c', 'exit 1'], { project: '/p', label: 'unit' }))
+    const green = q.enqueue(ask(['sh', '-c', 'exit 0'], { project: '/p', label: 'unit (rerun)' }))
+    const expected = q.enqueue(ask(['sh', '-c', 'exit 1'], { project: '/p', label: 'C2 RED', expect: 'fail' }))
     const surprise = q.enqueue(ask(['sh', '-c', 'exit 0'], { project: '/p', label: 'C3 RED', expect: 'fail' }))
-    await q.wait(red.id, 10_000)
-    await q.wait(surprise.id, 10_000)
+    for (const run of [red, green, expected, surprise]) await q.wait(run.id, 10_000)
     const items = inboxItems(q.list(), Date.now())
-    expect(items.find((one) => one.id === `run:${red.id}`)).toMatchObject({ state: 'done', label: expect.stringContaining('failed as expected') })
-    expect(items.find((one) => one.id === `run:${surprise.id}`)).toMatchObject({ state: 'attention', label: expect.stringContaining('expected to fail') })
-    /* The run results the project shows keep the command's own result. */
+    expect(items).toHaveLength(4)
+    expect(items.every((one) => one.state === 'done' && one.priority === 'low')).toBe(true)
+    expect(items.find((one) => one.id === `run:${expected.id}`)?.label).toContain('failed as expected')
+    expect(items.find((one) => one.id === `run:${surprise.id}`)?.label).toContain('expected to fail')
     expect(q.get(red.id)?.state).toBe('failed')
+    expect(q.get(expected.id)?.state).toBe('failed')
   })
-  test('the asker being told lowers a failure, only for its own run', async () => {
-    const q = queue()
-    const red = q.enqueue(ask(['sh', '-c', 'exit 1'], { project: '/p', asker: { via: 'mcp', said: 'x', token: 'tok-a-long-enough-token-1234', conversation: null } }))
-    await q.wait(red.id, 10_000)
-    q.told(red.id, { token: 'tok-b-long-enough-token-1234' })
-    expect(q.get(red.id)?.askerToldAt ?? null).toBeNull()
-    q.told(red.id, { token: 'tok-a-long-enough-token-1234' })
-    expect(inboxItems(q.list(), Date.now())[0]).toMatchObject({ state: 'attention', priority: 'low' })
-  })
-  test('Mark all seen keeps to one project, or takes every one', async () => {
-    const q = queue()
-    const runs = ['/a', '/a', '/b'].map((project) => q.enqueue(ask(['sh', '-c', 'exit 1'], { project })))
-    for (const run of runs) await q.wait(run.id, 10_000)
-    expect(q.seenAll({ person: true }, '/a').sort()).toEqual([runs[0]!.id, runs[1]!.id].sort())
-    expect(q.get(runs[2]!.id)?.seenAt ?? null).toBeNull()
-    expect(q.seenAll({ person: true })).toEqual([runs[2]!.id])
-  })
-  test('runs already stuck asking when the queue starts are superseded by a pass kept with them', () => {
+  test('what 0.6.0 kept on a run for asking the person is dropped as the runs are read', () => {
     const dir = scratch()
-    const base = { kind: 'verify', refs: [], epic: null, project: '/p', argv: ['bun', 'test'], cwd: '/p-worktrees/fix', asker: { via: 'mcp', said: 'x', token: null, conversation: null }, origin: origin('fix'), why: null, pri: 1, rank: 1, pid: null, overdue: false, key: 'k' }
     const now = Date.now()
-    const kept = [
-      { ...base, id: 'old-red', label: 'final', state: 'failed', exit: 1, queuedAt: now - 5000, startedAt: now - 5000, finishedAt: now - 4000, seenAt: null },
-      { ...base, id: 'old-green', label: 'final (rerun)', state: 'passed', exit: 0, queuedAt: now - 3000, startedAt: now - 3000, finishedAt: now - 2000 },
-      { ...base, id: 'lone-red', label: 'other', state: 'failed', exit: 1, queuedAt: now - 3000, startedAt: now - 3000, finishedAt: now - 2000 },
-    ]
-    writeFileSync(join(dir, 'runs.json'), JSON.stringify({ version: 1, runs: kept }))
-    const q = queue({ dir })
-    expect(q.get('old-red')?.supersededBy).toBe('old-green')
-    expect(q.get('lone-red')?.seenAt ?? null).toBeNull()
-    expect(inboxItems(q.list(), now).filter((one) => one.state === 'attention').map((one) => one.id)).toEqual(['run:lone-red'])
+    const kept = { id: 'old-red', key: 'k', label: 'final', kind: 'verify', refs: [], epic: null, project: '/p', argv: ['bun', 'test'], cwd: '/p', asker: { via: 'mcp', said: 'x', token: null, conversation: null }, origin: null, why: null, pri: 1, rank: 1, pid: null, overdue: false, state: 'failed', exit: 1, queuedAt: now - 5000, startedAt: now - 5000, finishedAt: now - 4000, seenAt: now - 3000, seenBy: 'person', supersededBy: 'x', askerToldAt: now - 3000 }
+    writeFileSync(join(dir, 'runs.json'), JSON.stringify({ version: 1, runs: [kept] }))
+    const run = queue({ dir }).get('old-red') as unknown as Record<string, unknown>
+    expect(run.state).toBe('failed')
+    for (const key of ['seenAt', 'seenBy', 'supersededBy', 'askerToldAt']) expect(key in run).toBe(false)
   })
 })

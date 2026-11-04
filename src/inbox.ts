@@ -1,21 +1,14 @@
 import { LIMITS, activityItemSchema, activityItemsSchema, type ActivityItem } from 'kehikot-module-protocol'
 
-import { needsThePerson } from '../queue/attention.ts'
 import { baseName, originOf } from '../queue/origin.ts'
 import type { RunView } from '../queue/queue.ts'
-
-export { needsThePerson }
 
 /**
  * What Test runs reports to the host's Inbox (`activity.set`): each run of the last day that came
  * from a project, filed under that project (`project`, protocol 1.8.0) and the place it was asked
- * from (epic and parts). A run whose result nobody expected — a failure, or a pass of a run meant
- * to fail — NEEDS the person (`attention`) until it is seen (`needsThePerson`): opened from the
- * Inbox, its output opened, marked seen, in view on a visible page, or superseded by a later pass of
- * the same work. Then it leaves the list, and the run stays in the page's. Its priority is `low`
- * once the session that asked has read it (queue_wait), else `normal`. A run that came out as
- * expected, or was cancelled, is `done`; a waiting or running one is `working`. The list is whole
- * each time.
+ * from (epic and parts). Nothing here ever needs the person: a run that ended — passed, failed or
+ * cancelled — is a quiet `done`, a waiting or running one is `working`, and every item is `low`
+ * priority. Whether it passed is in its label and on the page. The list is whole each time.
  */
 export const INBOX_HOURS = 24
 
@@ -59,11 +52,8 @@ export function inboxItems(runs: readonly RunView[], now: number): ActivityItem[
     if (!run.project) continue
     const when = run.finishedAt ?? run.startedAt ?? run.queuedAt
     if (now - when > INBOX_HOURS * 3_600_000) continue
-    const asks = needsThePerson(run)
     const meantToFail = run.expect === 'fail'
-    /* A surprise already seen has done its asking, and the run stays in the page's list. */
-    if ((run.state === 'failed' || run.state === 'passed') && !asks && (meantToFail ? run.state === 'passed' : run.state === 'failed')) continue
-    const state = asks ? 'attention' : run.state === 'queued' || run.state === 'running' ? 'working' : 'done'
+    const state = run.state === 'queued' || run.state === 'running' ? ('working' as const) : ('done' as const)
     const where = whereItRan(run)
     const exit = run.exit !== null ? ` (exit ${run.exit})` : ''
     const label =
@@ -75,7 +65,7 @@ export function inboxItems(runs: readonly RunView[], now: number): ActivityItem[
       : run.state === 'running' ? `Tests running: ${run.label} ${where}`
       : `Tests waiting: ${run.label} ${where}`
     const branch = originOf(run)?.branch
-    const detail = `Started by ${run.asker.said.replace(/\.$/, '')}. Ran in ${run.cwd}${branch ? ` on branch ${branch}` : ''}.${asks ? ' Open it to see its output in Test runs.' : ''}${asks && run.askerToldAt ? ' The session that asked for it has read the result.' : ''}${run.why ? ` ${run.why}` : ''}`
+    const detail = `Started by ${run.asker.said.replace(/\.$/, '')}. Ran in ${run.cwd}${branch ? ` on branch ${branch}` : ''}.${run.why ? ` ${run.why}` : ''}`
     const place = placeOf(run)
     items.push({
       id: itemIdOf(run.id),
@@ -83,8 +73,7 @@ export function inboxItems(runs: readonly RunView[], now: number): ActivityItem[
       label: cut(label, LIMITS.ACTIVITY_LABEL),
       detail: cut(detail, LIMITS.ACTIVITY_DETAIL),
       since: when,
-      /* The asker already read it: still the person's to look at, but not loudly. */
-      priority: asks && !run.askerToldAt ? ('normal' as const) : ('low' as const),
+      priority: 'low' as const,
       ...(run.refs.length ? { refs: run.refs.slice(0, LIMITS.ACTIVITY_REFS) } : {}),
       ...(place ? { place } : {}),
       project: run.project,
