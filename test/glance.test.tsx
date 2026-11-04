@@ -4,9 +4,14 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import { Screen } from '../src/app.tsx'
 import {
   AXES_HEIGHT,
+  PAD_X,
+  PAD_Y,
   SPARK_HEIGHT,
+  TIP_LINE_MAX,
   atLeast,
+  clip,
   clock,
+  columnHeight,
   indexAt,
   levelOf,
   loadTip,
@@ -22,6 +27,9 @@ import {
   strainSaid,
   tileLayout,
   tipAlign,
+  tipLines,
+  tipSide,
+  type Tip,
 } from '../src/glance.ts'
 import type { Api, Machine, Overview } from '../src/wire/api.ts'
 import type { Host } from '../src/wire/use-kehikot.ts'
@@ -191,19 +199,27 @@ describe('no result asks for the person', () => {
 })
 
 /*
- * The tiles in one narrow column (Test runs 0.9.0): title and number in a row of their own above the
- * plot, sparklines under 260 px and axes from there, and a tooltip that says the value against its
- * limit and when — by pointer, finger or keyboard.
+ * The tiles in one narrow column (Test runs 0.9.0, tidied in 0.9.1): no cards, a hairline between
+ * tiles, title, words and number on one row in one column with the plot edge to edge under it,
+ * sparklines under 260 px and axes from there, and a solid tooltip of three short lines outside the
+ * plot — by pointer, finger or keyboard.
  */
 
 describe('the tiles\' layout at each width', () => {
   test('one column of sparklines under 260 px, axes and a taller plot from there, three columns of sparklines from 360', () => {
-    expect(tileLayout(200)).toEqual({ columns: 1, tile: 200, axes: false, plot: SPARK_HEIGHT })
-    expect(tileLayout(240)).toEqual({ columns: 1, tile: 240, axes: false, plot: SPARK_HEIGHT })
-    expect(tileLayout(280)).toEqual({ columns: 1, tile: 280, axes: true, plot: AXES_HEIGHT })
-    expect(tileLayout(320)).toEqual({ columns: 1, tile: 320, axes: true, plot: AXES_HEIGHT })
-    expect(tileLayout(400)).toEqual({ columns: 3, tile: 128, axes: false, plot: SPARK_HEIGHT })
-    expect(tileLayout(null)).toEqual({ columns: 1, tile: null, axes: false, plot: SPARK_HEIGHT })
+    expect(tileLayout(200)).toEqual({ columns: 1, tile: 200, axes: false, plot: SPARK_HEIGHT, compact: true })
+    expect(tileLayout(240)).toEqual({ columns: 1, tile: 240, axes: false, plot: SPARK_HEIGHT, compact: true })
+    expect(tileLayout(280)).toEqual({ columns: 1, tile: 280, axes: true, plot: AXES_HEIGHT, compact: true })
+    expect(tileLayout(320)).toEqual({ columns: 1, tile: 320, axes: true, plot: AXES_HEIGHT, compact: true })
+    /* Three columns, 1 px apart. */
+    expect(tileLayout(400)).toEqual({ columns: 3, tile: 132, axes: false, plot: SPARK_HEIGHT, compact: false })
+    expect(tileLayout(null)).toEqual({ columns: 1, tile: null, axes: false, plot: SPARK_HEIGHT, compact: true })
+  })
+  test('one column stands no taller than it needs: 236 px at 240 (it was 322 with cards and gaps)', () => {
+    /* Three rows of 6 + 20 + 2 + 44 + 6, and two hairlines. */
+    expect(columnHeight(tileLayout(240))).toBe(236)
+    expect(columnHeight(tileLayout(200))).toBe(236)
+    expect(columnHeight(tileLayout(280))).toBe(3 * (6 + 20 + 2 + 72 + 6) + 2)
   })
   test('a pointer picks the nearest point of a line and the bar it is over, inside the plot', () => {
     expect(indexAt(95, 200, 6, 'line')).toBe(2)
@@ -211,6 +227,11 @@ describe('the tiles\' layout at each width', () => {
     expect(indexAt(120, 200, 4, 'bar')).toBe(2)
     expect(indexAt(-3, 200, 4, 'bar')).toBe(0)
     expect(indexAt(10, 0, 4, 'bar')).toBeNull()
+  })
+  test('the tooltip sits outside the plot: above when it fits, else below', () => {
+    expect(tipSide(80, 60)).toBe('above')
+    expect(tipSide(30, 60)).toBe('below')
+    expect(tipSide(0, 0)).toBe('below')
   })
   test('the tooltip leans away from the edge; the keys move along it; an axis top is round', () => {
     expect([tipAlign(0, 6), tipAlign(3, 6), tipAlign(5, 6)]).toEqual(['start', 'center', 'end'])
@@ -221,16 +242,33 @@ describe('the tiles\' layout at each width', () => {
 
 describe('what each tooltip says', () => {
   test('the queue: running of the most at once, and whether more could start', () => {
-    expect(queueTip({ at: 60_000, running: 1 }, 2)).toEqual({ value: '1/2 running', detail: '1 more could start', at: clock(60_000) })
-    expect(queueTip({ at: 60_000, running: 2 }, 2).detail).toBe('full: new runs wait')
+    expect(queueTip({ at: 60_000, running: 1 }, 2)).toEqual({ value: '1 / 2 running', detail: '1 more can start', note: clock(60_000) })
+    expect(queueTip({ at: 60_000, running: 2 }, 2).detail).toBe('Full: new runs wait')
   })
   test('the load against the limit above which new runs wait', () => {
-    expect(loadTip({ at: 60_000, load: 3.2 }, machine)).toEqual({ value: '3.2 / 9.0 load', detail: 'new runs wait above 9.0 · 12 cores', at: clock(60_000) })
-    expect(loadTip({ at: 60_000, load: 9.5 }, machine).detail).toBe('holding new runs · 12 cores')
+    expect(loadTip({ at: 60_000, load: 3.2 }, machine)).toEqual({ value: 'Load 3.2', detail: 'Runs wait above 9.0', note: clock(60_000) })
+    expect(loadTip({ at: 60_000, load: 9.5 }, machine).detail).toBe('Holding new runs')
   })
-  test('a result: its label and how it came out, how long it ran and when it ended', () => {
-    expect(resultTip({ id: 'p1', label: 'lint', state: 'passed', seconds: 75, at: 3500 })).toEqual({ value: '“lint” passed', detail: 'ran 1 min 15 s', at: clock(3500) })
-    expect(resultTip({ id: 'c1', label: 'x', state: 'cancelled', seconds: 0, at: 0 })).toEqual({ value: '“x” cancelled', detail: 'did not start', at: '' })
+  test('a result: how it came out and how long it ran, which run, and when it ended', () => {
+    expect(resultTip({ id: 'p1', label: 'lint', state: 'passed', seconds: 75, at: 3500 })).toEqual({ value: 'Passed in 1 min 15 s', detail: 'lint', note: clock(3500) })
+    expect(resultTip({ id: 'c1', label: 'x', state: 'cancelled', seconds: 0, at: 0 })).toEqual({ value: 'Cancelled before start', detail: 'x', note: '' })
+  })
+  test('every tooltip is three short lines at most, however large the figures and long the labels', () => {
+    const tips: Tip[] = [
+      queueTip({ at: 60_000, running: 12 }, 12),
+      queueTip({ at: 60_000, running: 0 }, 128),
+      loadTip({ at: 60_000, load: 123.45 }, { loadAbove: 99.9 }),
+      loadTip({ at: 60_000, load: 0 }, { loadAbove: 99.9 }),
+      resultTip({ id: 'l', label: 'kehikko-monitor tidy-tiles verify suite, the whole of it', state: 'failed', seconds: 3 * 3600 + 59 * 60, at: 3500 }),
+      resultTip({ id: 'm', label: 'unit', state: 'cancelled', seconds: 59 * 60 + 59, at: 3500 }),
+    ]
+    for (const one of tips) {
+      const lines = tipLines(one)
+      expect(lines.length).toBeGreaterThan(0)
+      expect(lines.length).toBeLessThanOrEqual(3)
+      for (const line of lines) expect(line.length).toBeLessThanOrEqual(TIP_LINE_MAX)
+    }
+    expect(clip('A'.repeat(40))).toHaveLength(TIP_LINE_MAX)
   })
 })
 
@@ -241,22 +279,49 @@ describe('the tiles drawn at each width', () => {
     [280, true, AXES_HEIGHT],
     [320, true, AXES_HEIGHT],
   ] as const) {
-    test(`${width} px: title and number in their own row above a plot ${height} px tall${axes ? ', with axes' : ', a sparkline'}`, async () => {
+    test(`${width} px: title, words and number on one row, then a plot ${height} px tall edge to edge${axes ? ', with axes' : ', a sparkline'}`, async () => {
       const { api } = fakeApi(RUNS)
       render(<Screen host={host()} api={api} now={() => 5000} box={{ width, height: 600 }} />)
       await settle()
       expect(screen.getByTestId('glance').getAttribute('data-axes')).toBe(String(axes))
+      expect(screen.getByTestId('glance').getAttribute('data-compact')).toBe('true')
       for (const id of ['tile-queue', 'tile-load', 'tile-results']) {
-        const [head, sub, plot] = [...screen.getByTestId(id).children] as HTMLElement[]
+        const [head, plot, more] = [...screen.getByTestId(id).children] as HTMLElement[]
         expect(head?.getAttribute('data-testid')).toBe(`${id}-head`)
-        expect(within(head!).getByRole('heading')).toBeTruthy()
+        const [title, sub, value] = [...head!.children] as HTMLElement[]
+        expect(title?.tagName).toBe('H2')
         expect(sub?.className).toContain('truncate')
         expect(sub?.getAttribute('title')).toBe(sub?.textContent ?? '')
+        expect(value?.getAttribute('data-testid')).toBe(`${id}-value`)
         expect(plot?.getAttribute('data-testid')).toBe(`${id}-plot`)
         expect(plot?.style.height).toBe(`${height}px`)
+        expect(plot?.style.marginInline).toBe(`-${PAD_X}px`)
+        expect(more).toBeUndefined()
       }
     })
   }
+
+  test('no cards: no border, background card or gap of a tile’s own, a hairline between, tight padding; side by side the words go under the title', async () => {
+    const { api } = fakeApi(RUNS)
+    const one = render(<Screen host={host()} api={api} now={() => 5000} box={{ width: 240, height: 600 }} />)
+    await settle()
+    const glance = screen.getByTestId('glance')
+    expect(glance.className).toContain('gap-px')
+    expect(glance.className).toContain('bg-border')
+    for (const tile of [...glance.children] as HTMLElement[]) {
+      expect(tile.className).not.toMatch(/\bborder\b|bg-card|rounded/)
+      expect(tile.className).toContain('bg-background')
+      expect(tile.style.padding).toBe(`${PAD_Y}px ${PAD_X}px`)
+    }
+    one.unmount()
+    render(<Screen host={host()} api={api} now={() => 5000} box={{ width: 700, height: 700 }} />)
+    await settle()
+    expect(screen.getByTestId('glance').getAttribute('data-compact')).toBe('false')
+    const [head, sub, plot] = [...screen.getByTestId('tile-queue').children] as HTMLElement[]
+    expect(head?.getAttribute('data-testid')).toBe('tile-queue-head')
+    expect(sub?.className).toContain('truncate')
+    expect(plot?.getAttribute('data-testid')).toBe('tile-queue-plot')
+  })
 
   test('Tab to a chart shows its latest point; the arrows move along; Escape and leaving close it', async () => {
     const { api } = fakeApi(RUNS)
@@ -268,18 +333,27 @@ describe('the tiles drawn at each width', () => {
     expect(queue.tabIndex).toBe(0)
     expect(tip('tile-queue').textContent).toBe('')
     fireEvent.focus(queue)
-    expect(tip('tile-queue').textContent).toBe(`1/2 running${clock(5000)}1 more could start`)
+    expect(tip('tile-queue').textContent).toBe(`1 / 2 running1 more can start${clock(5000)}`)
+    /* Solid, 12 px, a strong border and a shadow, wrapped within a width, outside the plot. */
+    const shown = tip('tile-queue')
+    for (const one of ['bg-popover', 'text-xs', 'border-foreground/25', 'shadow-lg', 'break-words', 'max-w-[min(15rem,calc(100%-8px))]']) expect(shown.className).toContain(one)
+    /* Never see-through: no opacity, no popover colour with an alpha. */
+    expect(shown.className).not.toMatch(/opacity|bg-popover\//)
+    expect(shown.getAttribute('data-side')).toBe('below')
+    expect(shown.style.top).toBe('calc(100% + 4px)')
+    expect((shown.firstElementChild as HTMLElement).className).toContain('font-semibold')
+    expect(shown.children).toHaveLength(3)
     expect(queue.getAttribute('aria-describedby')).toBe(tip('tile-queue').id)
     expect(tip('tile-queue').getAttribute('aria-live')).toBe('polite')
     fireEvent.keyDown(queue, { key: 'Escape' })
     expect(tip('tile-queue').textContent).toBe('')
     fireEvent.focus(plot('tile-load'))
-    expect(tip('tile-load').textContent).toBe(`2.4 / 9.0 load${clock(120_000)}new runs wait above 9.0 · 12 cores`)
+    expect(tip('tile-load').textContent).toBe(`Load 2.4Runs wait above 9.0${clock(120_000)}`)
     fireEvent.keyDown(plot('tile-load'), { key: 'ArrowLeft' })
-    expect(tip('tile-load').textContent).toContain('3.2 / 9.0 load')
+    expect(tip('tile-load').textContent).toContain('Load 3.2')
     fireEvent.focus(plot('tile-results'))
     fireEvent.keyDown(plot('tile-results'), { key: 'Home' })
-    expect(tip('tile-results').textContent).toBe(`“broken” failed${clock(3000)}ran 2 s`)
+    expect(tip('tile-results').textContent).toBe(`Failed in 2 sbroken${clock(3000)}`)
     fireEvent.blur(plot('tile-results'))
     expect(tip('tile-results').textContent).toBe('')
   })

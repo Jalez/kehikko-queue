@@ -3,7 +3,7 @@ import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ReferenceDot, Refe
 
 import { Plot } from '@/components/plot'
 import { ChartContainer, type ChartConfig } from '@/components/ui/chart'
-import { clock, counts, holding, loadTip, niceTop, queueNow, queueSaid, queueTip, recentResults, resultsSaid, resultTip, runningOver, strainSaid, tileLayout, type Result } from '@/glance'
+import { clock, counts, HEAD_HEIGHT, holding, loadTip, niceTop, PAD_X, PAD_Y, queueNow, queueSaid, queueTip, recentResults, resultsSaid, resultTip, ROW_GAP, runningOver, strainSaid, SUB_HEIGHT, tileLayout, type Result, type TileLayout } from '@/glance'
 import { useBox } from '@/use-box'
 import type { Machine } from '@/wire/api'
 
@@ -14,9 +14,10 @@ import type { RunView } from '../../queue/queue.ts'
  * the strain (the machine's load against the limit above which new runs wait), and the latest
  * results. Each says its numbers in words, and each chart is an image with its sentence: a chart is
  * never the only place a number is. Stacked as rows in a narrow container, side by side from 360 px.
- * A tile is its title and number in one row, a line in words, then the plot at a height of its own
- * (`tileLayout`): a sparkline under 260 px, axes and gridlines from there. Pointing at a chart,
- * touching it or arrowing through it from the keyboard shows a small tooltip (`Plot`).
+ * The tiles have no cards: a hairline between them, tight padding, the plot edge to edge. In one
+ * column a tile's title, words and number are one row with the plot directly under it (`tileLayout`):
+ * a sparkline under 260 px, axes and gridlines from there. Pointing at a chart, touching it or
+ * arrowing through it from the keyboard shows a small solid tooltip outside the plot (`Plot`).
  * Colours are the page's tokens (`--chart-*`), in both themes; a result's colour always has its word.
  */
 
@@ -28,7 +29,7 @@ const FILL: Record<Result['state'], string> = { passed: 'var(--chart-pass)', fai
 
 const MARGIN = { top: 2, right: 0, bottom: 0, left: 0 }
 /* Room for the top tick's text above the plot and the last time's below it, so no axis is clipped. */
-const AXES_MARGIN = { top: 6, right: 2, bottom: 0, left: 0 }
+const AXES_MARGIN = { top: 6, right: 4, bottom: 0, left: 0 }
 
 /** `width`: the tiles' row, when the tests say it; else measured. */
 export function Glance({ runs, machine, now, width }: { runs: readonly RunView[]; machine: Machine; now: number; width?: number }) {
@@ -43,8 +44,9 @@ export function Glance({ runs, machine, now, width }: { runs: readonly RunView[]
   const held = holding(machine)
   const most = Math.max(queue.most, 1)
   return (
-    <div ref={row} className="grid min-w-0 shrink-0 grid-cols-1 gap-2 @min-[360px]:grid-cols-3" data-testid="glance" data-axes={layout.axes}>
-      <Tile title="Queue" value={`${queue.running}/${queue.most} running`} sub={queue.waiting ? `${queue.waiting} waiting` : 'none waiting'} testId="tile-queue">
+    /* No cards: the grid's 1 px gap shows the border colour between tiles, which stand on the page's own background. */
+    <div ref={row} className="bg-border grid min-w-0 shrink-0 grid-cols-1 gap-px @min-[360px]:grid-cols-3" data-testid="glance" data-axes={layout.axes} data-compact={layout.compact}>
+      <Tile layout={layout} title="Queue" value={`${queue.running}/${queue.most} running`} sub={queue.waiting ? `${queue.waiting} waiting` : 'none waiting'} testId="tile-queue">
         <Plot said={queueSaid(queue)} count={over.length} kind="line" height={layout.plot} tip={(i) => queueTip(over[i]!, queue.most)} testId="tile-queue">
           {(active) => (
             <AreaPlot data={over} dataKey="running" config={QUEUE} axes={layout.axes} active={active} top={most} limit={queue.most} step format={(v) => String(v)} />
@@ -52,6 +54,7 @@ export function Glance({ runs, machine, now, width }: { runs: readonly RunView[]
         </Plot>
       </Tile>
       <Tile
+        layout={layout}
         title="Load"
         value={`${machine.load.toFixed(1)} / ${machine.loadAbove.toFixed(1)}`}
         sub={held ? 'holding new runs' : `${machine.cores} cores`}
@@ -76,6 +79,7 @@ export function Glance({ runs, machine, now, width }: { runs: readonly RunView[]
         </Plot>
       </Tile>
       <Tile
+        layout={layout}
         title="Results"
         value={results.length ? `${n.passed} passed` : 'none yet'}
         sub={results.length ? `${n.failed} failed${n.cancelled ? ` · ${n.cancelled} cancelled` : ''}` : 'no run has ended'}
@@ -133,7 +137,7 @@ function AreaPlot<T extends { at: number }>({
         <ReferenceLine y={limit} stroke="var(--muted-foreground)" strokeDasharray="3 3" ifOverflow="extendDomain" />
         {on ? <ReferenceLine x={on.at} stroke="var(--muted-foreground)" strokeDasharray="2 2" /> : null}
         <Area dataKey={String(dataKey)} type={step ? 'stepAfter' : 'monotone'} stroke={`var(--color-${dataKey})`} fill={`var(--color-${dataKey})`} fillOpacity={0.25} strokeWidth={2} isAnimationActive={false} />
-        {on ? <ReferenceDot x={on.at} y={Number(on[dataKey])} r={3} fill={`var(--color-${dataKey})`} stroke="var(--card)" /> : null}
+        {on ? <ReferenceDot x={on.at} y={Number(on[dataKey])} r={3} fill={`var(--color-${dataKey})`} stroke="var(--background)" /> : null}
       </AreaChart>
     </ChartContainer>
   )
@@ -158,21 +162,28 @@ function ResultBars({ results, axes, active }: { results: readonly Result[]; axe
   )
 }
 
-/** A glance tile: its title and number in one row, a line in words, then its plot at a height of its own. Nothing overlays the plot but the tooltip. */
-function Tile({ title, value, sub, subTone, testId, children }: { title: string; value: string; sub: string; subTone?: string; testId: string; children: React.ReactNode }) {
+/**
+ * A glance tile, with no card of its own: tight padding, the page's background, a hairline between
+ * it and the next (the grid's gap). In one column (`compact`) its title, line in words and number are
+ * one row, the plot directly under it; side by side the words go on a line under the title. Nothing
+ * overlays the plot but the tooltip, which sits outside it.
+ */
+function Tile({ layout, title, value, sub, subTone, testId, children }: { layout: TileLayout; title: string; value: string; sub: string; subTone?: string; testId: string; children: React.ReactNode }) {
+  const words = (
+    <p className={`min-w-0 truncate text-[11px] ${subTone ?? 'text-muted-foreground'} ${layout.compact ? 'flex-1' : ''}`} style={{ lineHeight: `${layout.compact ? HEAD_HEIGHT : SUB_HEIGHT}px` }} title={sub}>
+      {sub}
+    </p>
+  )
   return (
-    <section aria-label={title} className="bg-card flex min-w-0 flex-col gap-1 rounded-md border px-2 py-1.5" data-testid={testId}>
-      <div className="flex min-w-0 items-baseline justify-between gap-2" data-testid={`${testId}-head`}>
-        <h2 className="text-muted-foreground min-w-0 truncate text-[10px] font-medium tracking-wide uppercase" title={title}>
-          {title}
-        </h2>
+    <section aria-label={title} className="bg-background flex min-w-0 flex-col" style={{ padding: `${PAD_Y}px ${PAD_X}px`, rowGap: ROW_GAP }} data-testid={testId}>
+      <div className="flex min-w-0 items-baseline justify-between gap-2" style={{ height: HEAD_HEIGHT, lineHeight: `${HEAD_HEIGHT}px` }} data-testid={`${testId}-head`}>
+        <h2 className="text-muted-foreground shrink-0 text-[10px] font-medium tracking-wide uppercase">{title}</h2>
+        {layout.compact ? words : null}
         <p className="min-w-0 truncate text-sm font-semibold tabular-nums" data-testid={`${testId}-value`} title={value}>
           {value}
         </p>
       </div>
-      <p className={`truncate text-xs ${subTone ?? 'text-muted-foreground'}`} title={sub}>
-        {sub}
-      </p>
+      {layout.compact ? null : words}
       {children}
     </section>
   )
