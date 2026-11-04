@@ -9,6 +9,7 @@ import { HeaderMenus } from '@/components/header-menus'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet'
+import { footerItems } from '@/footer'
 import { headerItems, pressed, showingOf, type Showing } from '@/header'
 import { atLeast, levelOf, type Box, type Level } from '@/glance'
 import { inboxItems, runIdOf } from '@/inbox'
@@ -137,6 +138,16 @@ export function Screen({
         {children}
       </RunRow>
     )
+  /* The footer the host draws (2.38.0): the queue, the load and the latest results in words, and
+     what went wrong, so a container folded to its header and footer still says them. An older host
+     draws no footer, and the page keeps saying what went wrong itself. */
+  const drawsFooter = host.where === 'hosted' && host.drawsFooter === true
+  const footerSaid = drawsFooter && !cover ? JSON.stringify(footerItems({ runs, machine: overview?.machine ?? null, trouble: said })) : null
+  const { footer } = host
+  useEffect(() => {
+    if (footerSaid) footer?.(JSON.parse(footerSaid))
+  }, [footer, footerSaid])
+
   const waiting = runs.filter((run) => run.state === 'queued')
   const running = runs.filter((run) => run.state === 'running')
   const finished = runs.filter((run) => run.state !== 'queued' && run.state !== 'running')
@@ -161,7 +172,7 @@ export function Screen({
                 {jumpSaid}
               </p>
             ) : null}
-            {said ? (
+            {said && !drawsFooter ? (
               <p className="text-destructive text-xs" role="alert" data-testid="said">
                 {said}
               </p>
