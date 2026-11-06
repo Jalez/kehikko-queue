@@ -1,9 +1,10 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 
 import { pickedParts } from 'kehikot-module-protocol'
 import { useHost, type Host as ProtocolHost } from 'kehikot-module-protocol/client/react'
 import type { HostEvents } from 'kehikot-module-protocol/client'
 
+import { hideTip } from '@/lib/one-tip'
 import { ID } from '../../manifest.ts'
 
 /**
@@ -20,6 +21,10 @@ export interface Host
 
 export function useKehikot(events: HostEvents = {}): Host {
   const host = useHost(ID, events)
+  /* Off screen (`kehikot.visible` false): no chart tooltip is left standing for when it comes back. */
+  useEffect(() => {
+    if (!host.visible) hideTip()
+  }, [host.visible])
   const picked = useMemo(() => pickedParts(host.parts).map((part) => part.heading || part.id), [host.parts])
   return useMemo(() => ({ ...host, picked }), [host, picked])
 }
