@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, jest, test } from 'bun:test'
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 
 import { Screen } from '../src/app.tsx'
@@ -33,6 +33,7 @@ import {
 } from '../src/glance.ts'
 import type { Api, Machine, Overview } from '../src/wire/api.ts'
 import type { Host } from '../src/wire/use-kehikot.ts'
+import { TOUCH_MS, resetTips } from '../src/lib/one-tip.ts'
 import { aRun } from './inbox.test.ts'
 import { streams } from './streams.ts'
 
@@ -332,6 +333,7 @@ describe('the tiles drawn at each width', () => {
     const queue = plot('tile-queue')
     expect(queue.tabIndex).toBe(0)
     expect(tip('tile-queue').textContent).toBe('')
+    fireEvent.keyDown(document.body, { key: 'Tab' })
     fireEvent.focus(queue)
     expect(tip('tile-queue').textContent).toBe(`1 / 2 running1 more can start${clock(5000)}`)
     /* Solid, 12 px, a strong border and a shadow, wrapped within a width, outside the plot. */
@@ -356,5 +358,119 @@ describe('the tiles drawn at each width', () => {
     expect(tip('tile-results').textContent).toBe(`Failed in 2 sbroken${clock(3000)}`)
     fireEvent.blur(plot('tile-results'))
     expect(tip('tile-results').textContent).toBe('')
+  })
+})
+
+describe('one chart tooltip, and only while it is wanted (Test runs 0.9.2)', () => {
+  beforeEach(resetTips)
+
+  const draw = async () => {
+    const { api } = fakeApi(RUNS)
+    render(<Screen host={host()} api={api} now={() => 5000} box={{ width: 240, height: 600 }} />)
+    await settle()
+  }
+  const plotOf = (id: string) => {
+    const el = within(screen.getByTestId(`${id}-plot`)).getByRole('img')
+    el.getBoundingClientRect = () => ({ left: 0, top: 0, right: 200, bottom: 40, width: 200, height: 40, x: 0, y: 0, toJSON: () => ({}) })
+    return el
+  }
+  const tip = (id: string) => screen.getByTestId(`${id}-tip`).textContent
+  const hover = (el: HTMLElement) => fireEvent.pointerMove(el, { pointerType: 'mouse', clientX: 100, clientY: 20 })
+
+  test('leaving the plot hides it', async () => {
+    await draw()
+    const queue = plotOf('tile-queue')
+    hover(queue)
+    expect(tip('tile-queue')).not.toBe('')
+    fireEvent.pointerLeave(queue, { pointerType: 'mouse' })
+    expect(tip('tile-queue')).toBe('')
+  })
+
+  test('the pointer leaving the page (the module) hides it', async () => {
+    await draw()
+    const queue = plotOf('tile-queue')
+    hover(queue)
+    act(() => void document.documentElement.dispatchEvent(new MouseEvent('mouseleave')))
+    expect(tip('tile-queue')).toBe('')
+    hover(queue)
+    expect(tip('tile-queue')).not.toBe('')
+    act(() => void document.dispatchEvent(new PointerEvent('pointerout', { pointerType: 'mouse', relatedTarget: null })))
+    expect(tip('tile-queue')).toBe('')
+  })
+
+  test('the window losing focus, the page hidden, a scroll, a resize and Escape each hide it', async () => {
+    await draw()
+    const queue = plotOf('tile-queue')
+    const aways = [
+      () => window.dispatchEvent(new Event('blur')),
+      () => window.dispatchEvent(new Event('scroll')),
+      () => window.dispatchEvent(new Event('resize')),
+      () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })),
+    ]
+    for (const away of aways) {
+      hover(queue)
+      expect(tip('tile-queue')).not.toBe('')
+      act(() => void away())
+      expect(tip('tile-queue')).toBe('')
+    }
+  })
+
+  test('showing a second hides the first: never every chart at once', async () => {
+    await draw()
+    hover(plotOf('tile-queue'))
+    hover(plotOf('tile-load'))
+    hover(plotOf('tile-results'))
+    expect(tip('tile-results')).not.toBe('')
+    expect(tip('tile-queue')).toBe('')
+    expect(tip('tile-load')).toBe('')
+    fireEvent.keyDown(document.body, { key: 'Tab' })
+    fireEvent.focus(plotOf('tile-load'))
+    fireEvent.focus(plotOf('tile-queue'))
+    expect(tip('tile-load')).toBe('')
+    expect(tip('tile-results')).toBe('')
+    expect(tip('tile-queue')).not.toBe('')
+  })
+
+  test('a click that focuses a chart leaves no tooltip once the pointer goes', async () => {
+    await draw()
+    const queue = plotOf('tile-queue')
+    fireEvent.pointerDown(queue, { pointerType: 'mouse', clientX: 100, clientY: 20 })
+    fireEvent.focus(queue)
+    expect(tip('tile-queue')).not.toBe('')
+    fireEvent.pointerLeave(queue, { pointerType: 'mouse' })
+    expect(tip('tile-queue')).toBe('')
+    fireEvent.blur(queue)
+    fireEvent.focus(queue)
+    expect(tip('tile-queue')).toBe('')
+  })
+
+  test('keyboard focus still shows it, and blur hides it', async () => {
+    await draw()
+    const queue = plotOf('tile-queue')
+    fireEvent.pointerDown(document.body, { pointerType: 'mouse' })
+    fireEvent.keyDown(document.body, { key: 'Tab' })
+    fireEvent.focus(queue)
+    expect(tip('tile-queue')).toBe(`1 / 2 running1 more can start${clock(5000)}`)
+    fireEvent.blur(queue)
+    expect(tip('tile-queue')).toBe('')
+  })
+
+  test('a tap shows it; a tap elsewhere or the time hides it', async () => {
+    await draw()
+    jest.useFakeTimers()
+    try {
+      const queue = plotOf('tile-queue')
+      fireEvent.pointerDown(queue, { pointerType: 'touch', clientX: 100, clientY: 20 })
+      fireEvent.pointerLeave(queue, { pointerType: 'touch' })
+      expect(tip('tile-queue')).not.toBe('')
+      fireEvent.pointerDown(document.body, { pointerType: 'touch' })
+      expect(tip('tile-queue')).toBe('')
+      fireEvent.pointerDown(queue, { pointerType: 'touch', clientX: 100, clientY: 20 })
+      expect(tip('tile-queue')).not.toBe('')
+      act(() => void jest.advanceTimersByTime(TOUCH_MS + 1))
+      expect(tip('tile-queue')).toBe('')
+    } finally {
+      jest.useRealTimers()
+    }
   })
 })
