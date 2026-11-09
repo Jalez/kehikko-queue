@@ -3,6 +3,7 @@ import { resolveDoorPlace, sameTicket, type Before, type HostHasProjectOptions }
 import { argvOf, cwdOf, epicOf, expectOf, kindOf, labelOf, refsOf } from './asks.ts'
 import { runEnv } from './env.ts'
 import { originFromCwd, originFromPlace } from './origin-find.ts'
+import { checkFolder, preflightRefusal, wouldFail } from './preflight.ts'
 import { ended, type Asker, type Queue } from './queue.ts'
 import { projectOf } from '../store.ts'
 
@@ -18,7 +19,10 @@ import { projectOf } from '../store.ts'
  *    has it could have run the command itself.
  *  - The body is JSON (the doors' rule) and bounded; the command is an argv, run as given.
  *
- *    POST /api/queue/run     { argv, cwd, env, keepEnv?, kind?, label?, refs?, epic?, place?, from?, expect? } → { ok, id, key }
+ *    POST /api/queue/run     { argv, cwd, env, keepEnv?, kind?, label?, refs?, epic?, place?, from?, expect?, preflight?, checks? }
+ *                            → { ok, id, key, warn }, or { ok: false, refused: true, error } when the folder is not ready
+ *                            (its preflight failed, or a built-in check says it would fail): not queued, and not to be
+ *                            run outside the queue either.
  *    GET  /api/queue/follow  ?id=&from=  → one JSON object per line: { run } as it changes, { out } as
  *                            output arrives (from byte `from`), and last { end: run } when it ended.
  *    POST /api/queue/cancel  { id, key }
@@ -36,6 +40,74 @@ export interface CliDoorOptions {
   ask?: () => HostHasProjectOptions
   /** How often a follow looks again, in ms. */
   everyMs?: number
+  /**
+   * The MCP door, for a `queue_wait` call this door answers as a stream (`waitCall`): `tick` is told
+   * how the run stands every so often, and throws once the caller has gone, which ends the wait.
+   */
+  mcp?: (rpc: McpCall, query: URLSearchParams, tick: (said: string) => void) => Promise<{ status: number; body: unknown }>
+}
+
+/** A JSON-RPC call to `/mcp`, as far as this door reads it. */
+export interface McpCall {
+  jsonrpc?: string
+  id?: number | string
+  method?: string
+  params?: { name?: string; arguments?: Record<string, unknown>; _meta?: { progressToken?: string | number } }
+}
+
+/** The caller of a streamed `queue_wait` went away: the wait ends, and so does its watch. */
+export class CallerGone extends Error {}
+
+/**
+ * A `queue_wait` call (issue #27), answered as a stream so that the wait ends when its caller goes
+ * away: a client that gives up on a long tool call must not keep the run "watched", or its end would
+ * not be told to the session as a notice. A client that takes server-sent events and sent a
+ * `progressToken` is sent `notifications/progress` while it waits (where the run stands), so a
+ * client that resets its timeout on progress keeps the call; any other is sent the one JSON answer.
+ */
+export async function waitCall(request: Request, query: URLSearchParams, mcp: NonNullable<CliDoorOptions['mcp']>): Promise<Response | undefined> {
+  let rpc: McpCall
+  try {
+    const text = await request.clone().text()
+    if (text.length > BODY_MOST) return undefined
+    rpc = JSON.parse(text) as McpCall
+  } catch {
+    return undefined
+  }
+  if (!rpc || rpc.method !== 'tools/call' || rpc.params?.name !== 'queue_wait') return undefined
+  const token = rpc.params?._meta?.progressToken
+  const events = (request.headers.get('accept') ?? '').includes('text/event-stream')
+  const progress = events && (typeof token === 'string' || typeof token === 'number') ? token : null
+  const encoder = new TextEncoder()
+  let gone = false
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const send = (message: unknown) => controller.enqueue(encoder.encode(events ? `event: message\ndata: ${JSON.stringify(message)}\n\n` : JSON.stringify(message)))
+      let step = 0
+      const tick = (said: string) => {
+        if (gone) throw new CallerGone()
+        if (progress === null) return
+        step += 1
+        send({ jsonrpc: '2.0', method: 'notifications/progress', params: { progressToken: progress, progress: step, message: said } })
+      }
+      try {
+        const reply = await mcp(rpc, query, tick)
+        if (!gone) send(reply.body)
+      } catch {
+        /* The caller went away; nobody to answer. */
+      } finally {
+        try {
+          controller.close()
+        } catch {
+          /* The reader went away. */
+        }
+      }
+    },
+    cancel() {
+      gone = true
+    },
+  })
+  return new Response(stream, { headers: { 'content-type': events ? 'text/event-stream' : 'application/json', 'cache-control': 'no-store' } })
 }
 
 export function cliDoor(options: CliDoorOptions): Before {
@@ -44,6 +116,10 @@ export function cliDoor(options: CliDoorOptions): Before {
     /* The agent door runs commands too: only programs reach it. */
     if (path === '/mcp' && request.method === 'POST' && asker !== 'program') {
       return refuse(403, 'This door runs commands, so it answers programs on this computer only, never a page.')
+    }
+    if (path === '/mcp' && request.method === 'POST' && options.mcp) {
+      const waited = await waitCall(request, url.searchParams, options.mcp)
+      if (waited) return waited
     }
     if (!path.startsWith('/api/queue/')) return undefined
     if (asker !== 'program' || request.headers.get('origin') !== null || request.headers.get('sec-fetch-site') !== null) {
@@ -72,6 +148,17 @@ export function cliDoor(options: CliDoorOptions): Before {
       if (!refs.ok) return refuse(400, refs.why)
       const expect = expectOf(body.expect)
       if (!expect.ok) return refuse(400, expect.why)
+      /* Is the folder ready? Said now, not after the wait (issue #28). */
+      if (body.preflight !== undefined && body.preflight !== null) {
+        const pre = argvOf(body.preflight, '/bin/sh')
+        if (!pre.ok || !Array.isArray(body.preflight)) return refuse(400, pre.ok ? 'preflight is a command as an array of words.' : `preflight: ${pre.why}`)
+        const refused = await preflightRefusal(pre.value, cwd.value, env.env)
+        if (refused) return Response.json({ ok: false, refused: true, error: refused }, { status: 422 })
+      }
+      const checked = body.checks === false ? { refuse: [], warn: [] } : await checkFolder(cwd.value, env.env)
+      if (checked.refuse.length) {
+        return Response.json({ ok: false, refused: true, error: ['Not queued: it would fail before it did anything.', ...wouldFail(checked.refuse), 'Fix that and ask again, or pass --no-checks to queue it anyway.'].join('\n') }, { status: 422 })
+      }
       const token = typeof body.place === 'string' ? body.place : null
       const place = token ? await resolveDoorPlace(token, options.ask?.() ?? {}) : null
       const from = typeof body.from === 'string' ? body.from.trim().slice(0, 80) : ''
@@ -96,7 +183,7 @@ export function cliDoor(options: CliDoorOptions): Before {
         origin,
         expect: expect.value,
       })
-      return Response.json({ ok: true, id: run.id, key: run.key, dropped: env.dropped, run: q.view(run) })
+      return Response.json({ ok: true, id: run.id, key: run.key, dropped: env.dropped, warn: wouldFail(checked.warn), run: q.view(run) })
     }
 
     if (path === '/api/queue/cancel' && request.method === 'POST') {
@@ -112,6 +199,8 @@ export function cliDoor(options: CliDoorOptions): Before {
       const every = options.everyMs ?? 500
       const encoder = new TextEncoder()
       let stop = false
+      /* Someone follows it: its end is told to them, not as a notice too. Released when the follower goes. */
+      const release = q.watch(id)
       const stream = new ReadableStream<Uint8Array>({
         async start(controller) {
           const line = (value: unknown) => controller.enqueue(encoder.encode(`${JSON.stringify(value)}\n`))
@@ -139,6 +228,7 @@ export function cliDoor(options: CliDoorOptions): Before {
               await new Promise((done) => setTimeout(done, every))
             }
           } finally {
+            release()
             try {
               controller.close()
             } catch {
@@ -148,6 +238,7 @@ export function cliDoor(options: CliDoorOptions): Before {
         },
         cancel() {
           stop = true
+          release()
         },
       })
       return new Response(stream, { headers: { 'content-type': 'application/x-ndjson', 'cache-control': 'no-store' } })

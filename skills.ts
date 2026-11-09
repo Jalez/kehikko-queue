@@ -13,7 +13,7 @@ import { PREFERRED_PORT } from './manifest.ts'
  * Each is ONE file, `plugin/skills/<name>/SKILL.md`, and a template: where it says
  * `{{origin}}` the origin this process really serves on is written (`serveFrom`,
  * from the port Vite ended up bound to), and where it says `{{version}}` the
- * skill's version. The version is the first twelve hex digits of the sha256 of
+ * skill's version, and where it says `{{cli}}` the path of this module's CLI. The version is the first twelve hex digits of the sha256 of
  * the text with the origin filled in, so a changed text or a moved port makes an
  * installed copy "outdated" and Kehikot's Settings sync brings it level.
  *
@@ -28,6 +28,9 @@ import { PREFERRED_PORT } from './manifest.ts'
 export const PLUGIN_DIR = join(import.meta.dirname, 'plugin')
 export const ORIGIN_SLOT = '{{origin}}'
 export const VERSION_SLOT = '{{version}}'
+/** Where the skill says `{{cli}}`, this module's CLI as installed beside this file: what an agent runs to wait on a run. */
+export const CLI_SLOT = '{{cli}}'
+export const CLI = join(import.meta.dirname, 'bin', 'kehikot-queue')
 
 export const OFFERED = [
   {
@@ -57,7 +60,7 @@ const sha12 = (text: string): string => createHash('sha256').update(text).digest
 
 /** A template filled in for one origin: the text as served, and its version. */
 export function fill(template: string, origin: string): { text: string; version: string } {
-  const placed = template.replaceAll(ORIGIN_SLOT, origin)
+  const placed = template.replaceAll(ORIGIN_SLOT, origin).replaceAll(CLI_SLOT, CLI)
   const version = sha12(placed)
   return { text: placed.replaceAll(VERSION_SLOT, version), version }
 }

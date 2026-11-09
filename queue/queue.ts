@@ -9,6 +9,7 @@ import { decide, moved, ordered, priorityOf, waitingSaid, type Capacity, type Mo
 import { ensureDirs, exitDir, logsDir } from './machine.ts'
 import type { Origin } from './origin.ts'
 import type { Expect } from './expect.ts'
+import { FAST_MS, signatureOf } from './preflight.ts'
 
 /**
  * The queue: every run asked for on this computer, from any session, in one list. It starts each
@@ -113,6 +114,11 @@ export interface QueueOptions {
   ticked?(): void
   /** How often the queue looks at the load and its runs, in ms. 0: only when asked (tests). */
   tickMs?: number
+  /**
+   * Told once when a run ends, however it ended, with whether anyone was waiting on it at that moment
+   * (`watch`: a `queue_wait`, a CLI following it). Not told for a run its own asker cancelled.
+   */
+  ended?(run: Run, watched: boolean): void
 }
 
 const newId = () => `r${Date.now().toString(36)}${randomBytes(3).toString('hex')}`
@@ -138,6 +144,8 @@ export class Queue {
   readonly #runs = new Map<string, Run>()
   readonly #env = new Map<string, Record<string, string>>()
   readonly #waiters = new Set<() => void>()
+  /** How many are waiting on each run now (`watch`). */
+  readonly #watched = new Map<string, number>()
   readonly #clock: () => number
   readonly #spawner: Spawner
   #timer: ReturnType<typeof setInterval> | null = null
@@ -176,10 +184,14 @@ export class Queue {
     for (const run of kept) {
       if (run.state === 'queued') {
         Object.assign(run, { state: 'cancelled', finishedAt: now, why: 'The queue restarted before this run started. Ask for it again.' })
+        this.#told(run)
       } else if (run.state === 'running') {
         const code = exitOf(exitFile(exitDir(this.options.dir), run.id))
         if (code !== null) this.#end(run, code, null, false, endedAt(exitFile(exitDir(this.options.dir), run.id)))
-        else if (run.pid === null || !alive(run.pid)) Object.assign(run, { state: 'failed', finishedAt: now, why: 'It stopped while the queue was away and left no exit code.' })
+        else if (run.pid === null || !alive(run.pid)) {
+          Object.assign(run, { state: 'failed', finishedAt: now, why: 'It stopped while the queue was away and left no exit code.' })
+          this.#told(run)
+        }
         /* Else: still running in its own group; `tick` looks for its exit file. */
       }
       for (const key of RETIRED) delete (run as unknown as Record<string, unknown>)[key]
@@ -283,6 +295,8 @@ export class Queue {
     Object.assign(run, { state: 'cancelled', finishedAt: this.#clock(), why: 'person' in by ? 'Cancelled by the person.' : 'Cancelled by the session that asked for it.' })
     this.#env.delete(id)
     this.#changed(run)
+    /* The asker that cancelled its own run knows; the person's cancel is news to it. */
+    if ('person' in by) this.#told(run)
     this.tick()
     return null
   }
@@ -360,6 +374,19 @@ export class Queue {
     })
   }
 
+  /** Say that someone waits on this run until the returned function is called: its end is then not news (`ended`). */
+  watch(id: string): () => void {
+    this.#watched.set(id, (this.#watched.get(id) ?? 0) + 1)
+    let done = false
+    return () => {
+      if (done) return
+      done = true
+      const left = (this.#watched.get(id) ?? 1) - 1
+      if (left > 0) this.#watched.set(id, left)
+      else this.#watched.delete(id)
+    }
+  }
+
   /** Listen for any change. Returns the unlisten. */
   onChange(then: () => void): () => void {
     this.#waiters.add(then)
@@ -430,7 +457,22 @@ export class Queue {
     run.finishedAt = at ?? this.#clock()
     run.pid = run.pid ?? null
     capLog(logFile(logsDir(this.options.dir), run.id))
+    /* A run that failed at once usually says why in its first lines: a fault in the folder, not the work (issue #28). */
+    if (code !== 0 && why === null && run.startedAt !== null && run.finishedAt - run.startedAt <= FAST_MS) {
+      const said = signatureOf(this.tail(run.id, 60))
+      if (said) run.why = `It failed ${Math.max(0, Math.round((run.finishedAt - run.startedAt) / 1000))} s after it started, which looks like the folder, not the work: ${said}`
+    }
     if (tell) this.#changed(run)
+    this.#told(run)
+  }
+
+  /** Tell `ended` once about a run that ended. */
+  #told(run: Run): void {
+    try {
+      this.options.ended?.(run, (this.#watched.get(run.id) ?? 0) > 0)
+    } catch {
+      /* Telling is a courtesy: it never stops the queue. */
+    }
   }
 
   #changed(run: Run): void {

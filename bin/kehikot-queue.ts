@@ -4,7 +4,9 @@
  * Queue, wait for it, and exit with its exit code. For a shell, a script and a git hook:
  *
  *   kehikot-queue run [--kind verify|build|task|push|review] [--label TEXT] [--ref REF]… [--epic SLUG]
- *                     [--place TOKEN] [--keep-env NAME]… [--from TEXT] [--expect fail] -- COMMAND [ARG…]
+ *                     [--place TOKEN] [--keep-env NAME]… [--from TEXT] [--expect fail]
+ *                     [--preflight 'SHELL LINE'] [--no-checks] -- COMMAND [ARG…]
+ *   kehikot-queue wait ID
  *   kehikot-queue status
  *
  * --kind: verify for tests (the default), build for a build, task for any other heavy command.
@@ -17,7 +19,14 @@
  * exit code is still the command's own.
  *
  * When Queue is not running, or will not take the run, the command runs here, now, outside the
- * queue, and this says so: a hook never breaks because the queue is away.
+ * queue, and this says so: a hook never breaks because the queue is away. A run refused because
+ * its folder is not ready — `--preflight` (a quick shell line run first, at once) failed, or a
+ * built-in check says it would fail (an untrusted mise config; `--no-checks` skips them) — is not
+ * run anywhere: this says why and exits 1.
+ *
+ * `wait ID` waits on a run already queued (by `queue_run`, say) as long as it takes, prints its
+ * output, and exits with its exit code like `run` does. Ctrl-C stops waiting; the run goes on. Run
+ * it as a background command and whoever started it is told when it exits.
  *
  * Finds Queue at the address its registration names (Kehikot's module registry), or
  * KEHIKOT_QUEUE_URL. Gets in with the token in the queue's own folder, which only this user can
@@ -82,11 +91,15 @@ export interface Parsed {
   from: string | null
   /** 'fail': the run is meant to fail. */
   expect: 'fail' | null
+  /** A quick check run at once, before the run waits, as argv; null for none. */
+  preflight: string[] | null
+  /** False: skip the built-in checks of the folder. */
+  checks: boolean
   argv: string[]
 }
 
 export function parse(args: string[], env: Env = process.env): Parsed | string {
-  const out: Parsed = { kind: 'verify', label: null, refs: [], epic: null, place: env.KEHIKOT_PLACE || null, keep: [], from: null, expect: null, argv: [] }
+  const out: Parsed = { kind: 'verify', label: null, refs: [], epic: null, place: env.KEHIKOT_PLACE || null, keep: [], from: null, expect: null, preflight: null, checks: true, argv: [] }
   for (let at = 0; at < args.length; at++) {
     const arg = args[at]!
     if (arg === '--') {
@@ -101,6 +114,12 @@ export function parse(args: string[], env: Env = process.env): Parsed | string {
     else if (arg === '--place') out.place = value() ?? null
     else if (arg === '--keep-env') out.keep.push(value() ?? '')
     else if (arg === '--from') out.from = value() ?? null
+    else if (arg === '--no-checks') out.checks = false
+    else if (arg === '--preflight') {
+      const line = value()?.trim()
+      if (!line) return '--preflight takes one shell line, quoted: --preflight \'bun install --frozen-lockfile --dry-run\'.'
+      out.preflight = ['/bin/sh', '-c', line]
+    }
     else if (arg === '--expect') {
       const said = value()
       if (said !== 'fail') return '--expect takes fail: --expect fail, for a run meant to fail (a red test written before the fix).'
@@ -146,6 +165,7 @@ interface RunView {
   why: string | null
   waiting: string | null
   position: number | null
+  expect?: 'fail' | null
 }
 
 /** What the exit code of a run that ended is, for the shell. */
@@ -162,7 +182,7 @@ export async function queued(parsed: Parsed, env: Env = process.env, cwd = proce
   if (!(await healthy(url))) return direct(parsed.argv, `Queue is not running (nothing answered at ${url}).`)
   const headers = { 'content-type': 'application/json', [TOKEN_HEADER]: token }
 
-  let answer: { ok?: boolean; id?: string; key?: string; error?: string; dropped?: string[] }
+  let answer: { ok?: boolean; id?: string; key?: string; error?: string; dropped?: string[]; warn?: string[]; refused?: boolean }
   try {
     const response = await fetch(`${url}/api/queue/run`, {
       method: 'POST',
@@ -179,15 +199,23 @@ export async function queued(parsed: Parsed, env: Env = process.env, cwd = proce
         place: parsed.place,
         from: parsed.from ?? (env.CLAUDECODE ? 'a Claude Code session\'s shell' : 'a shell'),
         ...(parsed.expect ? { expect: parsed.expect } : {}),
+        ...(parsed.preflight ? { preflight: parsed.preflight } : {}),
+        ...(parsed.checks ? {} : { checks: false }),
       }),
     })
     answer = (await response.json()) as typeof answer
   } catch (error) {
     return direct(parsed.argv, `Queue did not take the run (${error instanceof Error ? error.message : String(error)}).`)
   }
+  /* The folder is not ready: running it here would fail the same way. Say why, and stop. */
+  if (answer.refused) {
+    for (const line of (answer.error ?? 'Not queued: the folder is not ready.').split('\n')) SAY(line)
+    return 1
+  }
   if (!answer.ok || !answer.id || !answer.key) return direct(parsed.argv, `Queue did not take the run: ${answer.error ?? 'no reason given'}.`)
   const { id, key } = answer
   if (answer.dropped?.length) SAY(`left out of its environment as secret-looking: ${answer.dropped.join(', ')} (pass --keep-env NAME to keep one).`)
+  for (const line of answer.warn ?? []) SAY(line)
 
   let gone = false
   const cancel = async () => {
@@ -200,13 +228,24 @@ export async function queued(parsed: Parsed, env: Env = process.env, cwd = proce
   process.once('SIGINT', () => void cancel())
   process.once('SIGTERM', () => void cancel())
 
+  return follow(url, token, id, { expect: parsed.expect, instead: (why) => direct(parsed.argv, why) })
+}
+
+/**
+ * Follow one run to its end on `/api/queue/follow`: print where it is while it waits, its output as
+ * it runs, and say how it ended; answer the exit code for the shell. `instead` is what to do when
+ * the queue, not the command, is the trouble (it lost the run, or never started it): `run` runs the
+ * command here; `wait` has nothing to run and says so.
+ */
+export async function follow(url: string, token: string, id: string, options: { expect: 'fail' | null; instead: ((why: string) => Promise<number>) | null }): Promise<number> {
+  const insteadOr = (why: string, code: number) => (options.instead ? options.instead(why) : (SAY(why), Promise.resolve(code)))
   let from = 0
   let said = ''
   let lostSince: number | null = null
   for (;;) {
     try {
       const response = await fetch(`${url}/api/queue/follow?id=${encodeURIComponent(id)}&from=${from}`, { headers: { [TOKEN_HEADER]: token } })
-      if (response.status === 404) return direct(parsed.argv, 'Queue lost the run.')
+      if (response.status === 404) return insteadOr(options.instead ? 'Queue lost the run.' : `There is no run ${id} in the queue (it may have been forgotten). kehikot-queue status lists them.`, 2)
       if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`)
       lostSince = null
       const reader = response.body.getReader()
@@ -236,9 +275,10 @@ export async function queued(parsed: Parsed, env: Env = process.env, cwd = proce
           if (event.end) {
             const run = event.end
             /* The queue's own trouble, not the command's: the run never started. Run it here instead. */
-            if (run.state === 'cancelled' && run.why && /restarted before/.test(run.why)) return direct(parsed.argv, run.why)
-            if (run.state === 'failed' && run.exit === null && run.why && /could not be started|environment was lost/.test(run.why)) return direct(parsed.argv, `Queue could not start it (${run.why}).`)
-            const expected = parsed.expect === 'fail' ? (run.state === 'failed' ? ', as expected' : run.state === 'passed' ? ', but it was expected to fail' : '') : ''
+            if (options.instead && run.state === 'cancelled' && run.why && /restarted before/.test(run.why)) return options.instead(run.why)
+            if (options.instead && run.state === 'failed' && run.exit === null && run.why && /could not be started|environment was lost/.test(run.why)) return options.instead(`Queue could not start it (${run.why}).`)
+            const expect = options.expect ?? run.expect ?? null
+            const expected = expect === 'fail' ? (run.state === 'failed' ? ', as expected' : run.state === 'passed' ? ', but it was expected to fail' : '') : ''
             SAY(`${id} ${run.state}${run.exit !== null ? ` (exit ${run.exit})` : ''}${expected}${run.why ? `: ${run.why}` : '.'}`)
             return exitFor(run)
           }
@@ -254,6 +294,24 @@ export async function queued(parsed: Parsed, env: Env = process.env, cwd = proce
     }
     await new Promise((done) => setTimeout(done, 2000))
   }
+}
+
+/** `wait ID`: follow a run already queued to its end, and exit with its code. Ctrl-C stops waiting, not the run. */
+export async function waitOn(id: string, env: Env = process.env): Promise<number> {
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) {
+    SAY('wait takes a run\'s id, as queue_run or kehikot-queue status says it: kehikot-queue wait r1a2b3c.')
+    return 2
+  }
+  const { url, token } = where(env)
+  if (!url || !token || !(await healthy(url))) {
+    SAY(`Queue is not running here, so ${id} cannot be waited on.`)
+    return 69
+  }
+  process.once('SIGINT', () => {
+    SAY(`stopped waiting; ${id} goes on in the queue.`)
+    process.exit(130)
+  })
+  return follow(url, token, id, { expect: null, instead: null })
 }
 
 async function status(env: Env = process.env): Promise<number> {
@@ -279,10 +337,12 @@ if (import.meta.main) {
       process.exit(2)
     }
     process.exit(await queued(parsed))
+  } else if (verb === 'wait' && rest.length === 1) {
+    process.exit(await waitOn(rest[0]!))
   } else if (verb === 'status') {
     process.exit(await status())
   } else {
-    process.stderr.write('usage: kehikot-queue run [--kind verify|build|task|push|review] [--label TEXT] [--ref REF] [--epic SLUG] [--place TOKEN] [--keep-env NAME] [--from TEXT] [--expect fail] -- COMMAND [ARG…]\n       kehikot-queue status\n')
+    process.stderr.write('usage: kehikot-queue run [--kind verify|build|task|push|review] [--label TEXT] [--ref REF] [--epic SLUG] [--place TOKEN] [--keep-env NAME] [--from TEXT] [--expect fail] [--preflight \'LINE\'] [--no-checks] -- COMMAND [ARG…]\n       kehikot-queue wait ID\n       kehikot-queue status\n')
     process.exit(2)
   }
 }

@@ -43,12 +43,25 @@ Now each run waits in Queue and starts when there is room; whoever asked waits f
 kehikot-queue run --kind push --label "pre-push monorepo" --ref '!3907' -- bun run check
 kehikot-queue run --kind build --label "vite build" -- bun run build
 kehikot-queue run --kind task --label "install" -- bun install
+kehikot-queue run --preflight 'test -d node_modules' -- bun test
+kehikot-queue wait r1a2b3c4
 kehikot-queue status
 ```
 
 It queues the command, prints its place in the queue while it waits, prints the output as it runs,
 and exits with the command's exit code. Ctrl-C cancels the run. **If Queue is not running** (or
 cannot take the run), it runs the command right there and says so, so a hook never breaks.
+
+`wait ID` waits on a run that is already queued (by an agent's `queue_run`, say) for as long as it
+takes, prints its output and exits with its exit code. Ctrl-C only stops waiting. An agent runs it
+as a background command, and its harness wakes it when the run ends.
+
+**A folder that is not ready is said at once**, not after the wait: `--preflight 'LINE'` runs a quick
+shell line in the folder first (at most 60 s) and refuses the run if it fails; a mise config file mise
+does not trust refuses it too (`--no-checks` skips that); a `node_modules` missing or older than its
+lockfile is said as "Would fail" and the run is queued anyway. A refused run is not run anywhere: the
+CLI says why and exits 1. A run that fails within seconds with a known sign of a folder problem (an
+untrusted mise config, a module not found, a program not found) says what to fix.
 
 Options: `--kind verify|build|task|push|review` (default `verify`), `--label TEXT`, `--ref REF` (repeatable; `!3907`, `#12`,
 `gh#12`), `--epic SLUG`, `--place TOKEN` (or `KEHIKOT_PLACE`: a session's Kehikot place, so the run
@@ -80,11 +93,19 @@ The command gets no input (a pre-push hook's list of refs on stdin is not passed
 ## From an agent: the MCP door
 
 - `queue_run` — `command` (an array of words, or one line for the person's login shell), `cwd`,
-  `kind` (verify for tests, the default; build; task for anything else heavy), `label`, `ref`; answers an id and a key at once. The session and epic come from the
-  conversation's place (`?kehikot-place=` on the door's URL).
+  `kind` (verify for tests, the default; build; task for anything else heavy), `label`, `ref`,
+  `preflight` (a quick check run first), `checks: false` (skip the built-in ones); answers an id and a
+  key at once, any "Would fail" lines, and the `kehikot-queue wait <id>` line to run as a background
+  command. The session and epic come from the conversation's place (`?kehikot-place=` on the door's URL).
 - `queue_status` — the queue, or one run.
 - `queue_wait` — waits up to `timeout_seconds` (240, at most 1800) and answers passed or failed, the
-  exit code, the times and the end of the output (more of it for a failure).
+  exit code, the times and the end of the output (more of it for a failure). With a `progressToken`
+  and a client that takes server-sent events, it sends progress (where the run stands) every 15 s.
+
+**When a run ends and nothing waits on it** (no `queue_wait`, no CLI following it), Queue asks Kehikot
+to tell the session that asked, in one line: "Run "unit" failed (exit 1) after 2 min — in /work/x. …".
+Kehikot types it in when the session is idle and the person lets messages wake sessions, so an agent
+can end its turn after queueing and still hear the result.
 - `queue_cancel` — your own runs: those of this conversation's place, or with the key.
 
 `queue_run` and the CLI take `expect: 'fail'` (`--expect fail`) for a run meant to fail, a red test
