@@ -50,8 +50,8 @@ describe('the manifest', () => {
 describe('what agent sessions are told (protocol 2.36.0)', () => {
   test('where it is, when to use it; where it is not, not to run heavy suites directly', () => {
     const parsed = manifestSchema.parse(DECLARED)
-    expect(agentSaysOf(parsed)).toContain('Queue heavy test runs here')
-    expect(absentSaysOf(parsed)).toBe("Don't start heavy test runs directly. If the person insists, suggest adding Test runs to this kehikko so runs don't collide.")
+    expect(agentSaysOf(parsed)).toContain('Run heavy commands — tests, builds, big installs — through the Queue')
+    expect(absentSaysOf(parsed)).toBe("Don't start heavy commands (test suites, builds, big installs) directly. If the person insists, suggest adding Queue to this kehikko so runs don't collide.")
     for (const line of [parsed.agentSays, parsed.absentSays]) expect(line!.length).toBeLessThanOrEqual(200)
   })
 })

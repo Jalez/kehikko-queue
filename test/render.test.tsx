@@ -48,7 +48,7 @@ const settle = () => act(async () => {
   await new Promise((done) => setTimeout(done, 20))
 })
 
-describe('the Test runs page', () => {
+describe('the Queue page', () => {
   test('lists waiting, running and finished runs with where each came from; its output is in a drawer, not inline', async () => {
     const runs = [
       aRun({ id: 'w1', state: 'queued', startedAt: null, finishedAt: null, exit: null, waiting: 'Next: waiting for one of the 2 running to finish (2 at once).', position: 1 }),

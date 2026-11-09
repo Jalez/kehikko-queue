@@ -156,6 +156,8 @@ describe('the CLI\'s own pieces', () => {
   test('parse', () => {
     expect(parse(['--kind', 'push', '--ref', '!1', '--', 'bun', 'test'], {})).toMatchObject({ kind: 'push', refs: ['!1'], argv: ['bun', 'test'] })
     expect(parse(['--kind', 'nightly', '--', 'x'], {})).toContain('--kind')
+    expect(parse(['--kind', 'build', '--', 'bun', 'run', 'build'], {})).toMatchObject({ kind: 'build' })
+    expect(parse(['--', 'bun', 'test'], {})).toMatchObject({ kind: 'verify' })
     expect(parse(['--', 'x'], { KEHIKOT_PLACE: 'tok' })).toMatchObject({ place: 'tok' })
   })
   test('parse --expect fail, and only fail', () => {

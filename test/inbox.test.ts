@@ -49,7 +49,7 @@ describe('the Inbox', () => {
     const [item] = inboxItems([aRun({ cwd: '/p-worktrees/fix-login', origin, asker: { via: 'mcp', said: 'an agent session (bd462ecd) in P › auth on "Wide".', token: null, conversation: null } })], 4000)
     expect(item!.label).toBe('Tests failed: pre-push monorepo on fix/login (exit 3)')
     expect(item!.detail).toBe('Started by an agent session (bd462ecd) in P › auth on "Wide". Ran in /p-worktrees/fix-login on branch fix/login.')
-    /* Not the kehikko it was asked from: that one may have no Test runs, and opening the item has to show the run. */
+    /* Not the kehikko it was asked from: that one may have no Queue, and opening the item has to show the run. */
     expect(item!.place).toEqual({ epic: 'auth', parts: ['login'] })
   })
   test('a place the protocol would refuse falls back to the epic, never failing the list', () => {
@@ -61,6 +61,22 @@ describe('the Inbox', () => {
     expect(items.map((one) => [one.id, one.state, one.priority, one.label])).toEqual([
       ['run:red', 'done', 'low', 'Tests failed as expected: pre-push monorepo in p (exit 3)'],
       ['run:surprise', 'done', 'low', 'Tests passed but were expected to fail: pre-push monorepo in p'],
+    ])
+  })
+  test('a build or a task is not a test: it is said by its label, "Failed: …"', () => {
+    const items = inboxItems([
+      aRun({ id: 'b', kind: 'build', label: 'vite build' }),
+      aRun({ id: 't', kind: 'task', label: 'bun install', state: 'passed', exit: 0 }),
+      aRun({ id: 'o', kind: 'other', label: 'migrate', state: 'cancelled', exit: null }),
+      aRun({ id: 'w', kind: 'build', label: 'vite build', state: 'queued', startedAt: null, finishedAt: null, exit: null }),
+      aRun({ id: 'v', kind: 'verify', label: 'bun test' }),
+    ], 4000)
+    expect(items.map((one) => one.label)).toEqual([
+      'Failed: vite build in p (exit 3)',
+      'Passed: bun install in p',
+      'Cancelled: migrate in p',
+      'Waiting: vite build in p',
+      'Tests failed: bun test in p (exit 3)',
     ])
   })
   test('item ids and run ids go both ways', () => {

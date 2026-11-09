@@ -48,7 +48,7 @@ export default defineConfig({
       answer: (method, path, query, body, ticket) => answer(method, path, query, body, ticket),
       stream,
       build: BUILD,
-      page: { title: 'Test runs', ticket: TICKET },
+      page: { title: 'Queue', ticket: TICKET },
       ours: isOurs,
     }),
     react(),

@@ -31,39 +31,40 @@ export const DECLARED: Manifest = manifestSchema.parse({
   kind: MANIFEST_KIND,
   protocol: PROTOCOL,
   id: ID,
-  name: 'Test runs',
+  name: 'Queue',
   /* The icon the official list gives it: Lucide's timer. */
   icon: 'lucide:timer',
   version: VERSION,
   /* The format of what this module keeps under `.kehikot/`. Raise it only in
      the release that first writes data an older release cannot read. */
   dataVersion: 1,
-  summary: 'One queue for the heavy test runs every session on this computer asks for, started when there is room.',
+  summary: 'One queue for heavy work every session on this computer asks for (test suites, builds, other resource-intensive commands), started when there\'s room.',
   /* Where a host files this module in its list, most fitting first. The words are `TAGS` in the protocol. */
-  tags: ['tests', 'agents'],
+  tags: ['tests', 'build', 'agents'],
   /* Composed into every agent's prompt on the canvas: what this module's presence obliges an agent to do. */
   guidance:
-    'This computer runs heavy test suites through Test runs, one queue for every session. Do not start a whole suite, a monorepo '
-    + 'typecheck or a pre-push run directly: put it in the queue with `queue_run` (command, cwd, kind, label, ref) and wait for its '
-    + 'result with `queue_wait` instead of polling the load. A failed run\'s answer has the end of its output.',
+    'This computer runs heavy work through Queue, one queue for every session. Do not start a whole test suite, a monorepo '
+    + 'typecheck, a build, a big install or a pre-push run directly: put it in the queue with `queue_run` (command, cwd, kind — '
+    + 'verify for tests, build, or task for anything else — label, ref) and wait for its result with `queue_wait` instead of '
+    + 'polling the load. A failed run\'s answer has the end of its output.',
   /* What every agent session is told about it (protocol 2.36.0): beside its name where it is on the
      kehikko, and — for a session on a kehikko it is NOT on, while it is installed here — the second. */
-  agentSays: "Queue heavy test runs here (queue_run, then queue_wait) instead of running them in the shell, so sessions don't collide.",
-  absentSays: "Don't start heavy test runs directly. If the person insists, suggest adding Test runs to this kehikko so runs don't collide.",
+  agentSays: "Run heavy commands — tests, builds, big installs — through the Queue (queue_run with a kind, then queue_wait) instead of in the shell, so sessions don't collide.",
+  absentSays: "Don't start heavy commands (test suites, builds, big installs) directly. If the person insists, suggest adding Queue to this kehikko so runs don't collide.",
   entry: '/app',
   /* What its content belongs to (protocol 2.29.0): one mode per scope, the default first. */
   modes: [
-    { id: 'queue', label: 'Test runs', scope: 'machine', scopeSays: 'every project’s test runs on this computer, whatever is open here' },
-    { id: 'here', label: 'This project', scope: 'project', scopeSays: 'this project’s test runs' },
+    { id: 'queue', label: 'Queue', scope: 'machine', scopeSays: 'every project’s queued work on this computer, whatever is open here' },
+    { id: 'here', label: 'This project', scope: 'project', scopeSays: 'this project’s queued work' },
   ],
   mcp: {
     url: '/mcp',
     transport: 'http',
-    about: 'Queue heavy test runs on this computer (queue_run), see the queue (queue_status), wait for a result (queue_wait), cancel your own (queue_cancel).',
+    about: 'Queue heavy work on this computer — test suites, builds, other resource-intensive commands (queue_run), see the queue (queue_status), wait for a result (queue_wait), cancel your own (queue_cancel).',
   },
   extensions: { emits: [], consumes: [] },
   /* Runs are this computer's, not a part's: nothing to narrow. */
-  partless: 'A test run is this computer\'s, for a change or an issue, never for a part of an epic.',
+  partless: 'A queued run is this computer\'s, for a change or an issue, never for a part of an epic.',
   declares: {
     protocol: `>=${PROTOCOL} <${PROTOCOL + 1}`,
     /* Only what is called. activity:report for `activity.set`: every run of the last day is in the Inbox, quietly: nothing needs the person.

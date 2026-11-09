@@ -17,7 +17,7 @@ import { ID } from './manifest.ts'
  * folder nobody opened in Kehikot is still run, it only has nowhere to be shown. The folder gets a
  * `.gitignore` of its own, because a run result is this machine's news and not the project's history.
  */
-export const RUNS_IGNORE = '# Test runs on this computer: not the project\'s history.\nruns.json\nruns.json.*\n'
+export const RUNS_IGNORE = '# Runs queued on this computer: not the project\'s history.\nruns.json\nruns.json.*\n'
 
 export function isProject(path: string | null | undefined): path is string {
   if (typeof path !== 'string' || !isAbsolute(path)) return false

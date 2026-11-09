@@ -109,7 +109,7 @@ describe('the jump-into button, from the origin', () => {
     expect(jumpFor(withId, { path: '/moved/p', id: 'project-scratch-1' }).goto?.project).toBeUndefined()
   })
   test('no project open, or no epic: disabled, with the reason', () => {
-    expect(jumpFor(base, null).words).toContain('Open Test runs in Kehikot')
+    expect(jumpFor(base, null).words).toContain('Open Queue in Kehikot')
     expect(jumpFor(base, { path: null, id: null }).goto).toBeNull()
     expect(jumpFor({ ...base, origin: { ...origin, epic: null } }, '/p').words).toContain('not in an epic')
   })

@@ -21,7 +21,7 @@ import { loadMoved, makeStream, runsChanged, waitingMoved } from './live.ts'
 import { Strain } from './queue/strain.ts'
 import { logFile } from './queue/runner.ts'
 import { cliToken, logsDir, queueDir } from './queue/machine.ts'
-import { ended, Queue, type Asker, type Run, type RunView } from './queue/queue.ts'
+import { ended, Queue, RUN_KINDS, type Asker, type Run, type RunView } from './queue/queue.ts'
 import { minutes, type Move } from './queue/schedule.ts'
 import { SETTINGS, capacityOf, cores, loadNow, readValues, writeValue } from './queue/settings.ts'
 
@@ -127,7 +127,7 @@ export function runSaid(run: RunView): string {
 }
 
 /** What `queue_seen`, which 0.6.0 had, answers now: nothing to do, and no error. */
-export const SEEN_GONE = 'Nothing to mark: Test runs no longer asks the person about results, passed or failed. Each run\'s result stays on the Test runs page.'
+export const SEEN_GONE = 'Nothing to mark: Queue no longer asks the person about results, passed or failed. Each run\'s result stays on the Queue page.'
 
 /** What came of an ended run, with the end of its output: more of it for a failure. */
 export function resultSaid(q: Queue, run: Run): string {
@@ -151,13 +151,15 @@ export function tools() {
     {
       name: 'queue_run',
       description:
-        'Put a heavy run (a whole test suite, a typecheck of a monorepo) in this computer\'s one queue instead of starting it now, '
-        + 'so runs from several sessions do not starve each other. Test runs starts it when there is room — at most a few at once, '
+        'Put heavy work — a whole test suite, a typecheck of a monorepo, a build, a big install or any other resource-intensive '
+        + 'command — in this computer\'s one queue instead of starting it now, so runs from several sessions do not starve each '
+        + 'other. Queue starts it when there is room — at most a few at once, '
         + 'and not while the machine is busy (but never later than its longest wait) — in its own process, in `cwd`, with the '
         + 'person\'s login shell environment, and keeps its output. Answers an id and a key at once; then call queue_wait with the id '
         + 'to wait for the result instead of polling the machine\'s load. Its pass or fail is the command\'s own exit code. '
-        + 'kind: push (a hook a person waits on) goes first; verify and review are background. ref: the change or issue it is for '
-        + '("!3907", "gh#12"), so a checklist of that work can show whether the tests pass.',
+        + 'kind: verify for tests (the default), build for a build, task for any other heavy command; push (a hook a person waits '
+        + 'on) goes first, the rest are background. ref: the change or issue it is for ("!3907", "gh#12"), so a checklist of that '
+        + 'work can show whether it passes.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -166,7 +168,7 @@ export function tools() {
             anyOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }],
           },
           cwd: { type: 'string', description: 'The absolute folder to run it in (a worktree, say). Default: the project of this conversation\'s place.' },
-          kind: { type: 'string', enum: ['push', 'verify', 'review', 'other'], description: 'What it is for. Default other.' },
+          kind: { type: 'string', enum: [...RUN_KINDS], description: 'What it is: verify (tests, the default), build, task (any other heavy command), push (a hook somebody waits on, goes first), review. other is the old name of task.' },
           label: { type: 'string', description: 'What a person calls this run: "pre-push monorepo", "bun test". Default: the command.' },
           ref: { description: 'The change or issue it is for, spelled as the tracker reading does: "!3907", "gh#12". One, or a list.', anyOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }] },
           expect: {
@@ -183,7 +185,7 @@ export function tools() {
     {
       name: 'queue_status',
       description:
-        'What is in this computer\'s test queue: every run waiting (in the order they start, and what each waits for), running, '
+        'What is in this computer\'s queue of heavy work (tests, builds, other commands): every run waiting (in the order they start, and what each waits for), running, '
         + 'and recently finished, with the session and epic each came from. With id, one run.',
       inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'One run\'s id, from queue_run.' } } },
       annotations: { readOnlyHint: true },
@@ -209,7 +211,7 @@ export function tools() {
       name: 'queue_cancel',
       description:
         'Cancel one of YOUR runs: waiting ones never start, a running one is stopped with its whole process group. Yours is one '
-        + 'asked for by this conversation\'s place, or one whose key (from queue_run) you pass. The person cancels any run on the Test runs page.',
+        + 'asked for by this conversation\'s place, or one whose key (from queue_run) you pass. The person cancels any run on the Queue page.',
       inputSchema: {
         type: 'object',
         properties: { id: { type: 'string', description: 'The run\'s id.' }, key: { type: 'string', description: 'The key queue_run answered, when this conversation has no place.' } },

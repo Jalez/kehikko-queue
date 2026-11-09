@@ -20,8 +20,8 @@ import type { Expect } from './expect.ts'
  * RUNNING carries on in its own process group, and is picked up again by its pid and its exit file.
  */
 
-export const RUN_KINDS = ['push', 'verify', 'review', 'other'] as const
-export type Kind = (typeof RUN_KINDS)[number]
+export { DEFAULT_KIND, isTests, KIND_WORDS, kindSaid, RUN_KINDS, type Kind } from './kinds.ts'
+import { publishedKind, type Kind } from './kinds.ts'
 export type State = 'queued' | 'running' | 'passed' | 'failed' | 'cancelled'
 
 export const LABEL_MOST = LIMITS.RUN_LABEL
@@ -277,7 +277,7 @@ export class Queue {
   cancel(id: string, by: By): string | null {
     const run = this.#runs.get(id)
     if (!run) return 'There is no such run.'
-    if (!owns(run, by)) return 'That run is not yours to cancel: only the session that asked for it, or the person on the Test runs page, can cancel it.'
+    if (!owns(run, by)) return 'That run is not yours to cancel: only the session that asked for it, or the person on the Queue page, can cancel it.'
     if (ended(run.state)) return `That run has already ${run.state === 'passed' ? 'passed' : run.state === 'failed' ? 'failed' : 'been cancelled'}.`
     if (run.state === 'running' && run.pid !== null) stopGroup(run.pid)
     Object.assign(run, { state: 'cancelled', finishedAt: this.#clock(), why: 'person' in by ? 'Cancelled by the person.' : 'Cancelled by the session that asked for it.' })
@@ -449,7 +449,7 @@ export class Queue {
       .map((run) => ({
         id: run.id,
         label: run.label,
-        kind: run.kind,
+        kind: publishedKind(run.kind),
         refs: run.refs,
         epic: run.epic,
         state: run.state,

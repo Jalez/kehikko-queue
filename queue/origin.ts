@@ -79,7 +79,7 @@ export function jumpFor(run: JumpRun, open: OpenProject | string | null, partNam
   if (!origin) return { goto: null, words: `Started outside any Kehikot project: ${baseName(run.cwd)}` }
   const name = origin.projectName ?? baseName(origin.project)
   const here = typeof open === 'string' ? { path: open, id: null } : open
-  if (!here || (!here.path && !here.id)) return { goto: null, words: `Open Test runs in Kehikot to go to ${name}.` }
+  if (!here || (!here.path && !here.id)) return { goto: null, words: `Open Queue in Kehikot to go to ${name}.` }
   if (!origin.epic) return { goto: null, words: `Started in ${name} but not in an epic, so there is no place to go to.` }
   const elsewhere = !(origin.projectId && here.id ? origin.projectId === here.id : origin.project === here.path)
   const parts = origin.parts.map(partName)

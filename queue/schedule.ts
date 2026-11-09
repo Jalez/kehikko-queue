@@ -29,7 +29,7 @@ export interface Waiting {
   queuedAt: number
 }
 
-export const KIND_PRIORITY: Record<string, number> = { push: 0, verify: 1, review: 1, other: 1 }
+export const KIND_PRIORITY: Record<string, number> = { push: 0, verify: 1, build: 1, task: 1, review: 1, other: 1 }
 
 export const priorityOf = (kind: string): number => KIND_PRIORITY[kind] ?? 1
 

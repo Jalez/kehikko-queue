@@ -1,3 +1,4 @@
+import { kindSaid } from '../queue/kinds.ts'
 import type { RunView } from '../queue/queue.ts'
 import type { Machine, Sample } from './wire/api.ts'
 
@@ -85,6 +86,8 @@ export type Ended = 'passed' | 'failed' | 'cancelled'
 export interface Result {
   id: string
   label: string
+  /** What the run was for (`verify`, `build`, `task`…), said on its tooltip. */
+  kind?: string
   state: Ended
   /** How long it ran, in seconds; 0 for a run cancelled before it started. */
   seconds: number
@@ -102,7 +105,7 @@ export function recentResults(runs: readonly RunView[], most = RESULTS_SHOWN): R
     .sort((a, b) => (b.finishedAt ?? 0) - (a.finishedAt ?? 0))
     .slice(0, most)
     .reverse()
-    .map((run) => ({ id: run.id, label: run.label, state: run.state, seconds: run.startedAt !== null && run.finishedAt !== null ? Math.max(0, Math.round((run.finishedAt - run.startedAt) / 1000)) : 0, at: run.finishedAt ?? 0 }))
+    .map((run) => ({ id: run.id, label: run.label, kind: run.kind, state: run.state, seconds: run.startedAt !== null && run.finishedAt !== null ? Math.max(0, Math.round((run.finishedAt - run.startedAt) / 1000)) : 0, at: run.finishedAt ?? 0 }))
 }
 
 export function counts(results: readonly Result[]): Record<Ended, number> {
@@ -116,7 +119,7 @@ export function resultsSaid(results: readonly Result[]): string {
   const n = counts(results)
   const parts = [`${n.passed} passed`, `${n.failed} failed`, ...(n.cancelled ? [`${n.cancelled} cancelled`] : [])]
   const last = results.at(-1)!
-  return `The last ${results.length}: ${parts.join(', ')}. Latest: “${last.label}” ${last.state}.`
+  return `The last ${results.length}: ${parts.join(', ')}. Latest: “${last.label}”${last.kind ? ` (${kindSaid(last.kind)})` : ''} ${last.state}.`
 }
 
 /* ---- the tiles in a narrow container ---- */
@@ -247,10 +250,13 @@ export function loadTip(point: Sample, machine: Pick<Machine, 'loadAbove'>): Tip
   return { value: `Load ${point.load.toFixed(1)}`, detail: point.load > machine.loadAbove ? 'Holding new runs' : `Runs wait above ${machine.loadAbove.toFixed(1)}`, note: clock(point.at) }
 }
 
+/** A kind on a tooltip, capitalised: "Tests", "Build", "Task". */
+const kindWord = (kind: string): string => { const said = kindSaid(kind); return said.charAt(0).toUpperCase() + said.slice(1) }
+
 const ENDED: Record<Ended, string> = { passed: 'Passed', failed: 'Failed', cancelled: 'Cancelled' }
 
 export function resultTip(one: Result): Tip {
-  return { value: one.seconds ? `${ENDED[one.state]} in ${seconds(one.seconds)}` : one.state === 'cancelled' ? 'Cancelled before start' : ENDED[one.state], detail: clip(one.label), note: one.at ? clock(one.at) : '' }
+  return { value: one.seconds ? `${ENDED[one.state]} in ${seconds(one.seconds)}` : one.state === 'cancelled' ? 'Cancelled before start' : ENDED[one.state], detail: clip(one.label), note: [one.kind ? kindWord(one.kind) : '', one.at ? clock(one.at) : ''].filter(Boolean).join(' · ') }
 }
 
 const seconds = (s: number): string => (s < 60 ? `${s} s` : s < 3600 ? `${Math.floor(s / 60)} min ${s % 60 ? `${s % 60} s` : ''}`.trim() : `${Math.floor(s / 3600)} h ${Math.round((s % 3600) / 60)} min`)
