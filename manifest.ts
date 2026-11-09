@@ -45,11 +45,13 @@ export const DECLARED: Manifest = manifestSchema.parse({
   guidance:
     'This computer runs heavy work through Queue, one queue for every session. Do not start a whole test suite, a monorepo '
     + 'typecheck, a build, a big install or a pre-push run directly: put it in the queue with `queue_run` (command, cwd, kind — '
-    + 'verify for tests, build, or task for anything else — label, ref) and wait for its result with `queue_wait` instead of '
-    + 'polling the load. A failed run\'s answer has the end of its output.',
+    + 'verify for tests, build, or task for anything else — label, ref, and preflight for a quick readiness check) and wait for '
+    + 'its result as long as it takes: run the `kehikot-queue wait <id>` line it answers as a background shell command, or call '
+    + '`queue_wait`; never poll the load. A failed run\'s answer has the end of its output. When nothing waits on a run as it '
+    + 'ends, Kehikot types its result into the session that asked.',
   /* What every agent session is told about it (protocol 2.36.0): beside its name where it is on the
      kehikko, and — for a session on a kehikko it is NOT on, while it is installed here — the second. */
-  agentSays: "Run heavy commands — tests, builds, big installs — through the Queue (queue_run with a kind, then queue_wait) instead of in the shell, so sessions don't collide.",
+  agentSays: "Run heavy commands — tests, builds, big installs — through the Queue (queue_run, then its wait line as a background shell command) instead of in the shell, so sessions don't collide.",
   absentSays: "Don't start heavy commands (test suites, builds, big installs) directly. If the person insists, suggest adding Queue to this kehikko so runs don't collide.",
   entry: '/app',
   /* What its content belongs to (protocol 2.29.0): one mode per scope, the default first. */
@@ -68,8 +70,9 @@ export const DECLARED: Manifest = manifestSchema.parse({
   declares: {
     protocol: `>=${PROTOCOL} <${PROTOCOL + 1}`,
     /* Only what is called. activity:report for `activity.set`: every run of the last day is in the Inbox, quietly: nothing needs the person.
-       view:navigate for `view.goto`: the jump-into button on a run. */
-    uses: ['activity:report', 'view:navigate'],
+       view:navigate for `view.goto`: the jump-into button on a run.
+       agents:message for `messages.notify` (protocol 2.54.0): a run's result told to the session that asked, when nothing waits on it. */
+    uses: ['activity:report', 'view:navigate', 'agents:message'],
     /* The jump-into button's view.goto carries the run's project (when it is not the open one) and
        the session that asked for it (protocol 2.28.0): a host before 2.28 is not asked. */
     navigates: ['project', 'show'],

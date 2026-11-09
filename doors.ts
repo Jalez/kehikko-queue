@@ -1,5 +1,6 @@
-import { DOOR_PLACE_SAYS, manifestSchema, placeDefaults, type DoorPlace, type Manifest } from 'kehikot-module-protocol'
+import { DOOR_PLACE_SAYS, LIMITS, manifestSchema, placeDefaults, type DoorPlace, type Manifest } from 'kehikot-module-protocol'
 import {
+  askHost,
   establishBuild,
   mintTicket,
   personEnv,
@@ -12,7 +13,7 @@ import {
 } from 'kehikot-module-protocol/serve'
 
 import { DECLARED, ID, VERSION } from './manifest.ts'
-import { isSkillPath, skillAt, skillDeclarations, serveFrom } from './skills.ts'
+import { CLI, isSkillPath, skillAt, skillDeclarations, serveFrom } from './skills.ts'
 import { projectOf, publish } from './store.ts'
 import { argvOf, cwdOf, epicOf, expectOf, kindOf, labelOf, refsOf } from './queue/asks.ts'
 import { runEnv } from './queue/env.ts'
@@ -24,6 +25,7 @@ import { cliToken, logsDir, queueDir } from './queue/machine.ts'
 import { ended, Queue, RUN_KINDS, type Asker, type Run, type RunView } from './queue/queue.ts'
 import { minutes, type Move } from './queue/schedule.ts'
 import { SETTINGS, capacityOf, cores, loadNow, readValues, writeValue } from './queue/settings.ts'
+import { checkFolder, preflightRefusal, wouldFail } from './queue/preflight.ts'
 
 /**
  * Every door but the page, as one function (`answer`), plus the queue they all share. The CLI's own
@@ -81,8 +83,59 @@ export function queue(): Queue {
     },
     ...toldOf(() => held, loadNow),
     tickMs: 5000,
+    ended: (run, watched) => void tellAsker(run, watched),
   })
   return held
+}
+
+/* ------------------------------------------------------------------ *
+ * Telling the asker (protocol 2.54.0, `messages.notify`)
+ * ------------------------------------------------------------------ */
+
+
+/** A word for a POSIX shell, quoted: the CLI's path has spaces on macOS ("Application Support"). */
+const quoted = (word: string): string => (/^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replaceAll("'", "'\\''")}'`)
+
+/** The command line that waits on one run and exits with its code (`kehikot-queue wait`). */
+export const waitLine = (id: string): string => `${quoted(CLI)} wait ${id}`
+
+/** A span of time as a person says it: "38 s", "4 min 12 s". */
+export function span(ms: number): string {
+  const seconds = Math.max(0, Math.round(ms / 1000))
+  if (seconds < 60) return `${seconds} s`
+  const minutes = Math.floor(seconds / 60)
+  return seconds % 60 ? `${minutes} min ${seconds % 60} s` : `${minutes} min`
+}
+
+/**
+ * The one line the session that asked is told when its run ends: built only from the run's own
+ * fields — label, outcome, exit code, how long, why — and how to read more with this module's tools.
+ */
+export function noticeFor(run: Pick<Run, 'id' | 'label' | 'state' | 'exit' | 'why' | 'expect' | 'startedAt' | 'finishedAt' | 'cwd'>): string {
+  const outcome = run.state === 'passed' ? 'passed' : run.state === 'failed' ? 'failed' : 'was cancelled'
+  const exit = run.exit !== null ? ` (exit ${run.exit})` : ''
+  const expected = run.expect === 'fail' ? (run.state === 'failed' ? ', as expected' : run.state === 'passed' ? ', but it was expected to fail' : '') : ''
+  const ran = run.startedAt !== null && run.finishedAt !== null ? ` after ${span(run.finishedAt - run.startedAt)}` : ''
+  const why = run.why ? ` ${run.why}` : ''
+  const tail = ` Its output: queue_status or queue_wait with id ${run.id}.`
+  const head = `Run ${JSON.stringify(run.label)} ${outcome}${exit}${expected}${ran} — in ${run.cwd}.`
+  const room = LIMITS.MESSAGE_BODY - head.length - tail.length
+  return `${head}${why.length > room ? `${why.slice(0, Math.max(0, room - 1))}…` : why}${tail}`
+}
+
+/**
+ * Tell the session that asked how its run came out, when nobody is waiting on it (a `queue_wait`, a
+ * CLI following it): Kehikot types it in for an idle session. Only for a run asked with a place token,
+ * and only through a host from 2.54.0; anything else is skipped quietly. Never throws.
+ */
+export async function tellAsker(run: Run, watched: boolean, ask: typeof askHost = askHost): Promise<'told' | 'skipped' | 'refused'> {
+  if (watched || !run.asker.token) return 'skipped'
+  try {
+    const said = await ask('messages.notify', { token: run.asker.token, body: noticeFor(run), kind: 'report' }, { module: ID })
+    return said.ok && said.data.outcome === 'sent' ? 'told' : 'refused'
+  } catch {
+    return 'refused'
+  }
 }
 
 /** The page's streams: the queue, and one run's output (`live.ts`). In `vite.config.ts` and `serve.ts` both. */
@@ -155,8 +208,11 @@ export function tools() {
         + 'command — in this computer\'s one queue instead of starting it now, so runs from several sessions do not starve each '
         + 'other. Queue starts it when there is room — at most a few at once, '
         + 'and not while the machine is busy (but never later than its longest wait) — in its own process, in `cwd`, with the '
-        + 'person\'s login shell environment, and keeps its output. Answers an id and a key at once; then call queue_wait with the id '
-        + 'to wait for the result instead of polling the machine\'s load. Its pass or fail is the command\'s own exit code. '
+        + 'person\'s login shell environment, and keeps its output. Answers an id and a key at once, and the command line that waits '
+        + 'for it as long as it takes: run that as a BACKGROUND shell command (in Claude Code, Bash with run_in_background) and you '
+        + 'are woken when it exits with the run\'s exit code. Or call queue_wait with the id. Do not poll the machine\'s load. Its pass '
+        + 'or fail is the command\'s own exit code. A fault in the folder is said at once instead of after the wait: an untrusted mise '
+        + 'config refuses the run, a stale node_modules is said as "Would fail", and preflight is your own quick check run first. '
         + 'kind: verify for tests (the default), build for a build, task for any other heavy command; push (a hook a person waits '
         + 'on) goes first, the rest are background. ref: the change or issue it is for ("!3907", "gh#12"), so a checklist of that '
         + 'work can show whether it passes.',
@@ -171,6 +227,11 @@ export function tools() {
           kind: { type: 'string', enum: [...RUN_KINDS], description: 'What it is: verify (tests, the default), build, task (any other heavy command), push (a hook somebody waits on, goes first), review. other is the old name of task.' },
           label: { type: 'string', description: 'What a person calls this run: "pre-push monorepo", "bun test". Default: the command.' },
           ref: { description: 'The change or issue it is for, spelled as the tracker reading does: "!3907", "gh#12". One, or a list.', anyOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }] },
+          preflight: {
+            description: 'A quick check run at once in cwd, before the run waits (at most 60 s): "bun install --frozen-lockfile --dry-run", "mise trust --show". If it fails, the run is refused with its output and never waits. Same forms as command.',
+            anyOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }],
+          },
+          checks: { type: 'boolean', description: 'false skips the built-in checks of the folder (an untrusted mise config, a stale node_modules). Default true.' },
           expect: {
             type: 'string',
             enum: ['fail'],
@@ -195,7 +256,9 @@ export function tools() {
       description:
         'Wait for one run to finish, up to timeout_seconds (default 240, at most 1800), and answer its result: passed or failed, '
         + 'the exit code, how long it waited and ran, and the end of its output (more of it when it failed). A run still going '
-        + 'when the time is up says so; call queue_wait again with the same id.',
+        + 'when the time is up says so; call queue_wait again with the same id. Sends progress notifications while it waits when '
+        + 'the call carries a progressToken. To wait as long as a run takes, prefer the command line queue_run answered '
+        + '(kehikot-queue wait <id>) as a background shell command.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -244,7 +307,41 @@ export function agentEnv(env: Record<string, string | undefined> = process.env):
   return 'env' in made ? made.env : {}
 }
 
-async function call(name: string, args: Record<string, unknown>, query: URLSearchParams, q: Queue): Promise<string> {
+/** How often a waiting `queue_wait` says how it stands, in ms. */
+export const PROGRESS_EVERY_MS = 15_000
+
+/** Where a run stands, in a few words, for a progress notification. */
+export function progressSaid(view: RunView, now = Date.now()): string {
+  if (view.state === 'queued') return `Waiting${view.position ? `, ${view.position}${view.position === 1 ? 'st' : view.position === 2 ? 'nd' : view.position === 3 ? 'rd' : 'th'} in line` : ''}: ${view.waiting ?? 'for room'}`
+  if (view.state === 'running') return `Running for ${span(now - (view.startedAt ?? now))}.`
+  return `${view.state}.`
+}
+
+/**
+ * Wait for a run up to `ms`, saying how it stands every `every` ms through `tick` (MCP progress).
+ * Resolves with the run as it is when it ended or the time ran out; undefined when there is no such run.
+ */
+export async function waitTelling(q: Queue, id: string, ms: number, tick?: (said: string) => void, every = PROGRESS_EVERY_MS): Promise<Run | undefined> {
+  const until = Date.now() + ms
+  for (;;) {
+    const left = Math.max(0, until - Date.now())
+    const run = await q.wait(id, tick ? Math.min(every, left) : left)
+    if (!run || ended(run.state) || Date.now() >= until) return run
+    tick?.(progressSaid(q.view(run)))
+  }
+}
+
+/** The lines `queue_run` answers after the run is queued: how to wait on it, and what Kehikot will do. */
+export function waitSaid(id: string, placed: boolean): string[] {
+  return [
+    `To wait for it as long as it takes, run this as a background shell command (Claude Code: Bash with run_in_background: true): ${waitLine(id)}`
+    + ' — it prints the run\'s output and exits with its exit code, and you are woken when it exits. Or call queue_wait with id '
+    + `${id} (at most 30 min a call; call it again while it is not finished).`,
+    placed ? 'If nothing is waiting on it when it ends, Kehikot types a one-line notice of its result into this session (when your person lets messages wake sessions), so you may end your turn.' : '',
+  ].filter(Boolean)
+}
+
+async function call(name: string, args: Record<string, unknown>, query: URLSearchParams, q: Queue, tick?: (said: string) => void): Promise<string> {
   const id = typeof args.id === 'string' ? args.id.slice(0, 64) : null
   const token = query.get('kehikot-place')
 
@@ -268,9 +365,16 @@ async function call(name: string, args: Record<string, unknown>, query: URLSearc
     if (!id) throw new Error('queue_wait takes id: the run\'s id, from queue_run.')
     const seconds = args.timeout_seconds === undefined ? 240 : Number(args.timeout_seconds)
     if (!Number.isFinite(seconds) || seconds < 0) throw new Error('timeout_seconds is a number of seconds.')
-    const run = await q.wait(id, Math.min(seconds, 1800) * 1000)
-    if (!run) throw new Error(`There is no run ${id}.`)
-    return resultSaid(q, run)
+    if (!q.get(id)) throw new Error(`There is no run ${id}.`)
+    /* Someone is waiting on it: its end is told here, not as a notice too. */
+    const release = q.watch(id)
+    try {
+      const run = await waitTelling(q, id, Math.min(seconds, 1800) * 1000, tick)
+      if (!run) throw new Error(`There is no run ${id}.`)
+      return resultSaid(q, run)
+    } finally {
+      release()
+    }
   }
 
   if (name === 'queue_cancel') {
@@ -307,11 +411,21 @@ async function call(name: string, args: Record<string, unknown>, query: URLSearc
     const expect = expectOf(args.expect)
     if (!expect.ok) throw new Error(expect.why)
     const epic = epicOf(named.epic)
+    const env = agentEnv()
+    /* Is the folder ready? Said now, not after the wait (issue #28). */
+    if (args.preflight !== undefined && args.preflight !== null && args.preflight !== '') {
+      const pre = argvOf(args.preflight, process.env.SHELL || '/bin/sh')
+      if (!pre.ok) throw new Error(`preflight: ${pre.why}`)
+      const refused = await preflightRefusal(pre.value, cwd.value, env)
+      if (refused) throw new Error(refused)
+    }
+    const checked = args.checks === false ? { refuse: [], warn: [] } : await checkFolder(cwd.value, env)
+    if (checked.refuse.length) throw new Error(['Not queued: it would fail before it did anything.', ...wouldFail(checked.refuse), 'Fix that and ask again, or pass checks: false to queue it anyway.'].join('\n'))
     const origin = place ? originFromPlace(place, cwd.value) : await originFromCwd(cwd.value, epic, ASK.options)
     const run = q.enqueue({
       argv: argv.value,
       cwd: cwd.value,
-      env: agentEnv(),
+      env,
       kind: kind.value,
       label: label.value,
       refs: refs.value,
@@ -324,7 +438,9 @@ async function call(name: string, args: Record<string, unknown>, query: URLSearc
     const view = q.view(run)
     return [
       `Queued ${run.id} (key ${run.key}). ${view.state === 'running' ? 'It started at once.' : (view.waiting ?? '')}`,
-      `Call queue_wait with id ${run.id} for its result.${place ? '' : ' Keep the key: without a place, it is how queue_cancel knows the run is yours.'}`,
+      ...wouldFail(checked.warn),
+      ...waitSaid(run.id, Boolean(place && token)),
+      place ? '' : 'Keep the key: without a place, it is how queue_cancel knows the run is yours.',
       DOOR_PLACE_SAYS.used(named.from, place),
     ].filter(Boolean).join('\n')
   }
@@ -338,7 +454,7 @@ interface Rpc {
   params?: { name?: string; arguments?: Record<string, unknown> }
 }
 
-export async function mcp(rpc: Rpc, query: URLSearchParams, q: Queue = queue()): Promise<Reply> {
+export async function mcp(rpc: Rpc, query: URLSearchParams, q: Queue = queue(), tick?: (said: string) => void): Promise<Reply> {
   const reply = (result: unknown) => ok({ jsonrpc: '2.0', id: rpc.id ?? null, result })
   const text = (said: string, isError = false) => reply({ content: [{ type: 'text', text: said }], ...(isError ? { isError } : {}) })
   if (rpc.method === 'initialize') {
@@ -348,7 +464,7 @@ export async function mcp(rpc: Rpc, query: URLSearchParams, q: Queue = queue()):
   if (rpc.method === 'tools/list') return reply({ tools: tools() })
   if (rpc.method === 'tools/call') {
     try {
-      return text(await call(String(rpc.params?.name ?? ''), rpc.params?.arguments ?? {}, query, q))
+      return text(await call(String(rpc.params?.name ?? ''), rpc.params?.arguments ?? {}, query, q, tick))
     } catch (error) {
       return text(error instanceof Error ? error.message : String(error), true)
     }
