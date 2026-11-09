@@ -1,6 +1,9 @@
 import { MANIFEST_KIND, PROTOCOL, manifestSchema, type Manifest } from 'kehikot-module-protocol'
 
 import pkg from './package.json'
+/* This module's introduction (protocol 2.57.0): slides the host shows in its introduction dialog. Also
+   read as a file from the repository, so a person can watch it before the module runs or is installed. */
+import intro from './intro.json'
 import { SETTINGS } from './queue/fields.ts'
 
 /*
@@ -53,6 +56,7 @@ export const DECLARED: Manifest = manifestSchema.parse({
      kehikko, and — for a session on a kehikko it is NOT on, while it is installed here — the second. */
   agentSays: "Run heavy commands — tests, builds, big installs — through the Queue (queue_run, then its wait line as a background shell command) instead of in the shell, so sessions don't collide.",
   absentSays: "Don't start heavy commands (test suites, builds, big installs) directly. If the person insists, suggest adding Queue to this kehikko so runs don't collide.",
+  intro,
   entry: '/app',
   /* What its content belongs to (protocol 2.29.0): one mode per scope, the default first. */
   modes: [
