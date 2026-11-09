@@ -1,0 +1,111 @@
+{
+  "slides": [
+    {
+      "title": "One queue for heavy work",
+      "body": "Test suites, builds and big installs from every session on this computer wait here and start when there is room, so they never collide.",
+      "art": {
+        "label": "three sessions sending their heavy work into one queue, one run going at a time",
+        "shapes": [
+          { "kind": "pane", "x": 16, "y": 14, "w": 78, "h": 34, "motion": "pop" },
+          { "kind": "pane", "x": 16, "y": 58, "w": 78, "h": 34, "motion": "pop", "delay": 0.15 },
+          { "kind": "pane", "x": 16, "y": 102, "w": 78, "h": 34, "motion": "pop", "delay": 0.3 },
+          { "kind": "rows", "x": 24, "y": 28, "widths": [50, 34], "gap": 8 },
+          { "kind": "rows", "x": 24, "y": 72, "widths": [44, 52], "gap": 8 },
+          { "kind": "rows", "x": 24, "y": 116, "widths": [56, 30], "gap": 8 },
+          { "kind": "line", "x": 98, "y": 31, "x2": 168, "y2": 60, "dashed": true, "motion": "draw", "delay": 0.5 },
+          { "kind": "line", "x": 98, "y": 75, "x2": 168, "y2": 75, "dashed": true, "motion": "draw", "delay": 0.6 },
+          { "kind": "line", "x": 98, "y": 119, "x2": 168, "y2": 90, "dashed": true, "motion": "draw", "delay": 0.7 },
+          { "kind": "pane", "x": 172, "y": 14, "w": 132, "h": 122, "tone": "strong", "motion": "pop", "delay": 0.2 },
+          { "kind": "text", "x": 182, "y": 34, "text": "Queue", "size": 9, "tone": "text" },
+          { "kind": "box", "x": 182, "y": 44, "w": 112, "h": 18, "round": 4, "tone": "card", "motion": "drop", "delay": 1 },
+          { "kind": "dot", "x": 192, "y": 53, "r": 3.5, "tone": "busy", "motion": "pulse" },
+          { "kind": "rows", "x": 202, "y": 51, "widths": [70], "tone": "text" },
+          { "kind": "box", "x": 182, "y": 68, "w": 112, "h": 18, "round": 4, "tone": "card", "motion": "drop", "delay": 1.6 },
+          { "kind": "dot", "x": 192, "y": 77, "r": 3.5, "tone": "faint" },
+          { "kind": "rows", "x": 202, "y": 75, "widths": [56] },
+          { "kind": "box", "x": 182, "y": 92, "w": 112, "h": 18, "round": 4, "tone": "card", "motion": "drop", "delay": 2.2 },
+          { "kind": "dot", "x": 192, "y": 101, "r": 3.5, "tone": "faint" },
+          { "kind": "rows", "x": 202, "y": 99, "widths": [64] }
+        ]
+      }
+    },
+    {
+      "title": "Your agents put work in it",
+      "body": "With Queue on the kehikko, an agent runs heavy commands with queue_run and waits for the result. From a shell, use kehikot-queue run.",
+      "art": {
+        "label": "an agent conversation asking for a test run, and the run arriving in the queue",
+        "shapes": [
+          { "kind": "pane", "x": 16, "y": 14, "w": 150, "h": 122, "motion": "pop" },
+          { "kind": "rows", "x": 28, "y": 32, "widths": [110, 84], "gap": 9 },
+          { "kind": "box", "x": 28, "y": 56, "w": 126, "h": 20, "round": 4, "tone": "faint", "motion": "rise", "delay": 0.5 },
+          { "kind": "text", "x": 36, "y": 69, "text": "queue_run bun test", "size": 8, "mono": true, "tone": "text", "motion": "rise", "delay": 0.5 },
+          { "kind": "rows", "x": 28, "y": 90, "widths": [96, 70], "gap": 9, "motion": "rise", "delay": 1.4 },
+          { "kind": "dot", "x": 34, "y": 118, "r": 2.5, "tone": "muted", "motion": "blink" },
+          { "kind": "dot", "x": 42, "y": 118, "r": 2.5, "tone": "muted", "motion": "blink", "delay": 0.3 },
+          { "kind": "dot", "x": 50, "y": 118, "r": 2.5, "tone": "muted", "motion": "blink", "delay": 0.6 },
+          { "kind": "line", "x": 170, "y": 66, "x2": 196, "y2": 66, "motion": "draw", "delay": 0.8, "tone": "strong" },
+          { "kind": "pane", "x": 200, "y": 30, "w": 104, "h": 88, "tone": "strong", "motion": "pop", "delay": 0.3 },
+          { "kind": "box", "x": 208, "y": 54, "w": 88, "h": 18, "round": 4, "tone": "card", "motion": "drop", "delay": 1 },
+          { "kind": "dot", "x": 217, "y": 63, "r": 3.5, "tone": "busy", "motion": "pulse", "delay": 1 },
+          { "kind": "text", "x": 226, "y": 66, "text": "bun test", "size": 8, "mono": true, "tone": "text" },
+          { "kind": "box", "x": 208, "y": 78, "w": 88, "h": 18, "round": 4, "tone": "card" },
+          { "kind": "dot", "x": 217, "y": 87, "r": 3.5, "tone": "ok" },
+          { "kind": "rows", "x": 226, "y": 85, "widths": [54] }
+        ]
+      }
+    },
+    {
+      "title": "Waiting, running, finished",
+      "body": "Each run sits in one of three groups. Move a waiting run up or down with its arrows, or cancel one that is no longer needed.",
+      "art": {
+        "label": "the queue's three groups, and a waiting run moved up",
+        "shapes": [
+          { "kind": "pane", "x": 40, "y": 8, "w": 240, "h": 134 },
+          { "kind": "text", "x": 52, "y": 30, "text": "Waiting", "size": 8, "tone": "muted" },
+          { "kind": "box", "x": 52, "y": 36, "w": 216, "h": 16, "round": 4, "tone": "card", "motion": "rise", "delay": 0.2 },
+          { "kind": "dot", "x": 62, "y": 44, "r": 3, "tone": "warn" },
+          { "kind": "rows", "x": 72, "y": 42, "widths": [110] },
+          { "kind": "box", "x": 238, "y": 39, "w": 11, "h": 10, "round": 2, "tone": "strong", "motion": "chip" },
+          { "kind": "text", "x": 243.5, "y": 47, "text": "↑", "size": 8, "middle": true, "tone": "strong" },
+          { "kind": "box", "x": 252, "y": 39, "w": 11, "h": 10, "round": 2, "tone": "faint" },
+          { "kind": "text", "x": 52, "y": 70, "text": "Running", "size": 8, "tone": "muted" },
+          { "kind": "box", "x": 52, "y": 76, "w": 216, "h": 16, "round": 4, "tone": "card", "motion": "rise", "delay": 0.4 },
+          { "kind": "dot", "x": 62, "y": 84, "r": 3, "tone": "busy", "motion": "pulse" },
+          { "kind": "rows", "x": 72, "y": 82, "widths": [130] },
+          { "kind": "text", "x": 52, "y": 110, "text": "Finished", "size": 8, "tone": "muted" },
+          { "kind": "box", "x": 52, "y": 116, "w": 216, "h": 16, "round": 4, "tone": "card", "motion": "rise", "delay": 0.6 },
+          { "kind": "dot", "x": 62, "y": 124, "r": 3, "tone": "ok" },
+          { "kind": "rows", "x": 72, "y": 122, "widths": [96] },
+          { "kind": "pointer", "x": 244, "y": 45, "motion": "pop", "delay": 1.2 }
+        ]
+      }
+    },
+    {
+      "title": "Open a run to see what happened",
+      "body": "Press a run for its command, where it came from and the end of its output. A failed run also says so in the Inbox.",
+      "art": {
+        "label": "a finished run pressed, and its output opening beside it",
+        "shapes": [
+          { "kind": "pane", "x": 14, "y": 20, "w": 130, "h": 110 },
+          { "kind": "box", "x": 24, "y": 38, "w": 110, "h": 18, "round": 4, "tone": "strong" },
+          { "kind": "dot", "x": 34, "y": 47, "r": 3.5, "tone": "danger" },
+          { "kind": "rows", "x": 44, "y": 45, "widths": [70], "tone": "text" },
+          { "kind": "box", "x": 24, "y": 62, "w": 110, "h": 18, "round": 4, "tone": "card" },
+          { "kind": "dot", "x": 34, "y": 71, "r": 3.5, "tone": "ok" },
+          { "kind": "rows", "x": 44, "y": 69, "widths": [60] },
+          { "kind": "box", "x": 24, "y": 86, "w": 110, "h": 18, "round": 4, "tone": "card" },
+          { "kind": "dot", "x": 34, "y": 95, "r": 3.5, "tone": "ok" },
+          { "kind": "rows", "x": 44, "y": 93, "widths": [78] },
+          { "kind": "pointer", "x": 100, "y": 50, "motion": "pop", "delay": 0.4 },
+          { "kind": "pane", "x": 156, "y": 10, "w": 150, "h": 130, "motion": "rise", "delay": 0.8 },
+          { "kind": "rows", "x": 168, "y": 28, "widths": [96], "tone": "text", "motion": "rise", "delay": 1 },
+          { "kind": "box", "x": 168, "y": 40, "w": 126, "h": 86, "round": 4, "tone": "faint", "motion": "rise", "delay": 1.1 },
+          { "kind": "text", "x": 176, "y": 56, "text": "$ bun test", "size": 8, "mono": true, "tone": "muted", "motion": "rise", "delay": 1.2 },
+          { "kind": "text", "x": 176, "y": 70, "text": "212 pass", "size": 8, "mono": true, "tone": "muted", "motion": "rise", "delay": 1.4 },
+          { "kind": "text", "x": 176, "y": 84, "text": "1 fail", "size": 8, "mono": true, "tone": "danger", "motion": "rise", "delay": 1.6 },
+          { "kind": "rows", "x": 176, "y": 96, "widths": [90, 70], "gap": 9, "motion": "rise", "delay": 1.8 }
+        ]
+      }
+    }
+  ]
+}
