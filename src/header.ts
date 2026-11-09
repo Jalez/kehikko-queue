@@ -1,7 +1,7 @@
 import { headerItemsSchema, type HeaderItem, type ModuleScope } from 'kehikot-module-protocol'
 
 /**
- * Test runs' header, and which runs it shows.
+ * Queue's header, and which runs it shows.
  *
  * Which runs show is the container's SCOPE (protocol 2.29.0), not a switch of
  * its own: `machine` ("This computer", the default) is every project's runs,
@@ -28,9 +28,9 @@ export function headerItems(): HeaderItem[] {
 
 /** What an agent pressing the old switch is told: the scope is the person's, in the settings window. */
 export const SCOPE_IS_THE_PERSONS =
-  'Which projects’ runs Test runs shows is its scope — This computer or Project — and the person picks it in its settings.'
+  'Which projects’ runs Queue shows is its scope — This computer or Project — and the person picks it in its settings.'
 
 export function pressed(item: string, _value: unknown): string {
   if (item === 'show') return SCOPE_IS_THE_PERSONS
-  return `Test runs has nothing called "${item.slice(0, 40)}" to press.`
+  return `Queue has nothing called "${item.slice(0, 40)}" to press.`
 }

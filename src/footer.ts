@@ -5,7 +5,7 @@ import { counts, holding, queueNow, queueSaid, recentResults, resultsSaid, strai
 import type { Machine } from './wire/api.ts'
 
 /**
- * Test runs' footer, in a host that draws one (`kehikot.footer`, protocol 2.38.0): what is going on
+ * Queue's footer, in a host that draws one (`kehikot.footer`, protocol 2.38.0): what is going on
  * now, in words, so a container folded to its header and footer still says it. The header holds
  * nothing (the scope is the person's, in the settings window); every item here is a readout, so
  * nothing is pressable.

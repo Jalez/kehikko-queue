@@ -9,7 +9,7 @@ export const SETTINGS: SettingField[] = settingsDeclarationSchema.parse([
   {
     key: 'most',
     label: 'Runs at once',
-    description: 'How many test runs may run at the same time. 0 lets Test runs decide: one for every six cores.',
+    description: 'How many runs (tests, builds, other heavy commands) may run at the same time. 0 lets Queue decide: one for every six cores.',
     type: 'number',
     default: 0,
     scope: 'machine',

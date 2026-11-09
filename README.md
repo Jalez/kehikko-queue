@@ -1,21 +1,27 @@
-# Test runs — a Kehikot module
+# Queue — a Kehikot module
 
-One queue for the heavy test runs every session on this computer asks for. Several Claude Code
-sessions, each in its own worktree, each running a whole suite before a push or after a fix, used to
-start at once and starve each other until timing-sensitive tests failed for no reason. Now each run
-waits in Test runs and starts when there is room; whoever asked waits for its own result.
+One queue for heavy work every session on this computer asks for: test suites, builds, and other
+resource-intensive commands (a big install, a migration, a long script). Several Claude Code
+sessions, each in its own worktree, each running a whole suite or a build before a push or after a
+fix, used to start at once and starve each other until timing-sensitive tests failed for no reason.
+Now each run waits in Queue and starts when there is room; whoever asked waits for its own result.
 
-- **When a run starts.** At most a few at once (Settings › Modules › Test runs › *Runs at once*;
+- **Kinds of run.** `verify` is tests (the default, as before), `build` a build, `task` any other heavy
+  command; `push` is a pre-push hook a person waits on, `review` a review round. A verify or push run is
+  said as tests ("Tests failed: …"); a build, a task or a review by its label ("Failed: …"). `other`, the old name of
+  `task`, is still taken. The protocol's run results know `push`, `verify`, `review` and `other`, so a
+  build or a task is published to other modules as `other`.
+
+- **When a run starts.** At most a few at once (Settings › Modules › Queue › *Runs at once*;
   automatic is one per six cores, 2 on a 12-core Mac). No new run starts while the 1-minute load is
   above *Busy above* per core (0.75: 9 on 12 cores), but a run that has waited *Start anyway after*
   (10 minutes) starts as soon as a slot is free, oldest first, so nothing waits forever.
-- **Who goes first.** A `push` (a pre-push hook a person is waiting on) before `verify`, `review` and
-  `other`; first come first served within each. You can move a waiting run up, down or to the top,
+- **Who goes first.** A `push` (a pre-push hook a person is waiting on) before every other kind; first come first served within each. You can move a waiting run up, down or to the top,
   and cancel any run, on the page.
 - **At a glance.** The top of the page is three tiles, each a number in words and a small live chart:
   the queue (running of the most at once, and waiting; the chart is the last 30 minutes), the strain
   (the 1-minute load against the limit above which new runs wait; the last 5 minutes), and the latest
-  results (passed, failed; one bar per run, as tall as it ran). A short container shows only these.
+  results (passed, failed; one bar per run, as tall as it ran; its tooltip says the run's kind). A short container shows only these.
 - **More as the container grows.** Narrow or short, one line per run, which opens its drawer (details,
   output, cancel). With room, each run's row with its kind, the jump into where it came from, its
   buttons and its output; roomier still, the session and epic it came from, the change or issue it is
@@ -26,7 +32,7 @@ waits in Test runs and starts when there is room; whoever asked waits for its ow
   ended is done, passed or failed. No result ever asks for your attention; whether it passed is in
   its line and on this page. Opening one from the Inbox shows that run here, with its output open.
 - **Run results for other modules.** Each project's runs are published as the protocol's run results
-  (2.27.0), so a module showing a change can show whether its tests pass, without either naming the other.
+  (2.27.0), so a module showing a change can show whether its checks pass, without either naming the other.
 - **Pass or fail is the command's own.** The command runs as given, in the folder it was asked in,
   with the caller's environment less anything that looks like a secret, and its exit code passes
   through unchanged.
@@ -35,20 +41,22 @@ waits in Test runs and starts when there is room; whoever asked waits for its ow
 
 ```
 kehikot-queue run --kind push --label "pre-push monorepo" --ref '!3907' -- bun run check
+kehikot-queue run --kind build --label "vite build" -- bun run build
+kehikot-queue run --kind task --label "install" -- bun install
 kehikot-queue status
 ```
 
 It queues the command, prints its place in the queue while it waits, prints the output as it runs,
-and exits with the command's exit code. Ctrl-C cancels the run. **If Test runs is not running** (or
+and exits with the command's exit code. Ctrl-C cancels the run. **If Queue is not running** (or
 cannot take the run), it runs the command right there and says so, so a hook never breaks.
 
-Options: `--kind push|verify|review|other`, `--label TEXT`, `--ref REF` (repeatable; `!3907`, `#12`,
+Options: `--kind verify|build|task|push|review` (default `verify`), `--label TEXT`, `--ref REF` (repeatable; `!3907`, `#12`,
 `gh#12`), `--epic SLUG`, `--place TOKEN` (or `KEHIKOT_PLACE`: a session's Kehikot place, so the run
 is filed under its epic), `--keep-env NAME` (keep a variable that looks like a secret, e.g. a token
 a test needs), `--from TEXT` (who is asking, e.g. "pre-push hook").
 
 **Install it** (once, your choice; it needs `bun`): link the script onto your PATH from wherever
-Test runs is on this computer —
+Queue is on this computer —
 
 ```
 # Installed by Kehikot:
@@ -72,7 +80,7 @@ The command gets no input (a pre-push hook's list of refs on stdin is not passed
 ## From an agent: the MCP door
 
 - `queue_run` — `command` (an array of words, or one line for the person's login shell), `cwd`,
-  `kind`, `label`, `ref`; answers an id and a key at once. The session and epic come from the
+  `kind` (verify for tests, the default; build; task for anything else heavy), `label`, `ref`; answers an id and a key at once. The session and epic come from the
   conversation's place (`?kehikot-place=` on the door's URL).
 - `queue_status` — the queue, or one run.
 - `queue_wait` — waits up to `timeout_seconds` (240, at most 1800) and answers passed or failed, the
@@ -84,7 +92,8 @@ written before the fix: its result is then said "failed as expected", or "passed
 to fail". 0.6.0's `queue_seen` is gone with the Inbox asking about results; a session that still calls
 it is told there is nothing to mark.
 
-`/queue` (a skill) asks an agent to run this work's tests through the queue and report.
+`/queue` (a skill) asks an agent to run this work's tests, a build or another heavy command through
+the queue and report.
 
 ## Safety
 
@@ -117,7 +126,7 @@ This module runs commands, so its doors are strict. It never runs anything it wa
 
   Finished runs and their logs go after 7 days, or beyond the newest 300.
 
-A run that is **running** when Test runs stops (an update restarts it) carries on in its own process
+A run that is **running** when Queue stops (an update restarts it) carries on in its own process
 group, and is picked up again at the next start with its exit code. A run still **waiting** then is
 ended as cancelled, because its environment was only in memory. The CLI then runs it directly.
 

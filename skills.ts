@@ -32,7 +32,7 @@ export const VERSION_SLOT = '{{version}}'
 export const OFFERED = [
   {
     name: 'queue',
-    summary: 'Type /queue: an agent runs this work\'s tests through the queue, waits for the result and tells you what came of it.',
+    summary: 'Type /queue: an agent runs this work\'s tests, a build or another heavy command through the queue, waits for the result and tells you what came of it.',
   },
 ] as const
 

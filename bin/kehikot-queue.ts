@@ -1,23 +1,25 @@
 #!/usr/bin/env bun
 /**
- * kehikot-queue — put a heavy run in this computer's Test runs queue, wait for it, and exit with
- * its exit code. For a shell, a script and a git hook:
+ * kehikot-queue — put heavy work (tests, a build, any other heavy command) in this computer's
+ * Queue, wait for it, and exit with its exit code. For a shell, a script and a git hook:
  *
- *   kehikot-queue run [--kind push|verify|review|other] [--label TEXT] [--ref REF]… [--epic SLUG]
+ *   kehikot-queue run [--kind verify|build|task|push|review] [--label TEXT] [--ref REF]… [--epic SLUG]
  *                     [--place TOKEN] [--keep-env NAME]… [--from TEXT] [--expect fail] -- COMMAND [ARG…]
  *   kehikot-queue status
  *
- * It asks Test runs to run COMMAND in this folder with this environment (less anything that looks
+ * --kind: verify for tests (the default), build for a build, task for any other heavy command.
+ *
+ * It asks Queue to run COMMAND in this folder with this environment (less anything that looks
  * like a secret, unless named with --keep-env), prints where it is in the queue while it waits,
  * prints the command's output as it runs, and exits with the command's own exit code. Ctrl-C while
  * waiting cancels the run. `--expect fail` says the run is meant to fail (a red test written before
  * the fix): its failure is then said "as expected", and a pass "but it was expected to fail". The
  * exit code is still the command's own.
  *
- * When Test runs is not running, or will not take the run, the command runs here, now, outside the
+ * When Queue is not running, or will not take the run, the command runs here, now, outside the
  * queue, and this says so: a hook never breaks because the queue is away.
  *
- * Finds Test runs at the address its registration names (Kehikot's module registry), or
+ * Finds Queue at the address its registration names (Kehikot's module registry), or
  * KEHIKOT_QUEUE_URL. Gets in with the token in the queue's own folder, which only this user can
  * read. Only node's built-in modules here, so this one file can be linked onto PATH as it is.
  */
@@ -84,7 +86,7 @@ export interface Parsed {
 }
 
 export function parse(args: string[], env: Env = process.env): Parsed | string {
-  const out: Parsed = { kind: 'other', label: null, refs: [], epic: null, place: env.KEHIKOT_PLACE || null, keep: [], from: null, expect: null, argv: [] }
+  const out: Parsed = { kind: 'verify', label: null, refs: [], epic: null, place: env.KEHIKOT_PLACE || null, keep: [], from: null, expect: null, argv: [] }
   for (let at = 0; at < args.length; at++) {
     const arg = args[at]!
     if (arg === '--') {
@@ -106,7 +108,8 @@ export function parse(args: string[], env: Env = process.env): Parsed | string {
     } else return `I do not know ${arg}. Put the command after --.`
   }
   if (!out.argv.length) return 'Put the command to run after --: kehikot-queue run --kind push --label "pre-push" -- bun test'
-  if (!['push', 'verify', 'review', 'other'].includes(out.kind)) return '--kind is push, verify, review or other.'
+  /* The queue's kinds (queue/kinds.ts), spelled here because this file imports only node's own. */
+  if (!['verify', 'build', 'task', 'push', 'review', 'other'].includes(out.kind)) return '--kind is verify (tests, the default), build, task (any other heavy command), push (a hook somebody waits on) or review.'
   return out
 }
 
@@ -154,9 +157,9 @@ export function exitFor(run: RunView): number {
 
 export async function queued(parsed: Parsed, env: Env = process.env, cwd = process.cwd()): Promise<number> {
   const { url, token } = where(env)
-  if (!url) return direct(parsed.argv, 'Test runs is not registered on this computer.')
-  if (!token) return direct(parsed.argv, 'Test runs has not run on this computer yet (no token).')
-  if (!(await healthy(url))) return direct(parsed.argv, `Test runs is not running (nothing answered at ${url}).`)
+  if (!url) return direct(parsed.argv, 'Queue is not registered on this computer.')
+  if (!token) return direct(parsed.argv, 'Queue has not run on this computer yet (no token).')
+  if (!(await healthy(url))) return direct(parsed.argv, `Queue is not running (nothing answered at ${url}).`)
   const headers = { 'content-type': 'application/json', [TOKEN_HEADER]: token }
 
   let answer: { ok?: boolean; id?: string; key?: string; error?: string; dropped?: string[] }
@@ -180,9 +183,9 @@ export async function queued(parsed: Parsed, env: Env = process.env, cwd = proce
     })
     answer = (await response.json()) as typeof answer
   } catch (error) {
-    return direct(parsed.argv, `Test runs did not take the run (${error instanceof Error ? error.message : String(error)}).`)
+    return direct(parsed.argv, `Queue did not take the run (${error instanceof Error ? error.message : String(error)}).`)
   }
-  if (!answer.ok || !answer.id || !answer.key) return direct(parsed.argv, `Test runs did not take the run: ${answer.error ?? 'no reason given'}.`)
+  if (!answer.ok || !answer.id || !answer.key) return direct(parsed.argv, `Queue did not take the run: ${answer.error ?? 'no reason given'}.`)
   const { id, key } = answer
   if (answer.dropped?.length) SAY(`left out of its environment as secret-looking: ${answer.dropped.join(', ')} (pass --keep-env NAME to keep one).`)
 
@@ -203,7 +206,7 @@ export async function queued(parsed: Parsed, env: Env = process.env, cwd = proce
   for (;;) {
     try {
       const response = await fetch(`${url}/api/queue/follow?id=${encodeURIComponent(id)}&from=${from}`, { headers: { [TOKEN_HEADER]: token } })
-      if (response.status === 404) return direct(parsed.argv, 'Test runs lost the run.')
+      if (response.status === 404) return direct(parsed.argv, 'Queue lost the run.')
       if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`)
       lostSince = null
       const reader = response.body.getReader()
@@ -234,7 +237,7 @@ export async function queued(parsed: Parsed, env: Env = process.env, cwd = proce
             const run = event.end
             /* The queue's own trouble, not the command's: the run never started. Run it here instead. */
             if (run.state === 'cancelled' && run.why && /restarted before/.test(run.why)) return direct(parsed.argv, run.why)
-            if (run.state === 'failed' && run.exit === null && run.why && /could not be started|environment was lost/.test(run.why)) return direct(parsed.argv, `Test runs could not start it (${run.why}).`)
+            if (run.state === 'failed' && run.exit === null && run.why && /could not be started|environment was lost/.test(run.why)) return direct(parsed.argv, `Queue could not start it (${run.why}).`)
             const expected = parsed.expect === 'fail' ? (run.state === 'failed' ? ', as expected' : run.state === 'passed' ? ', but it was expected to fail' : '') : ''
             SAY(`${id} ${run.state}${run.exit !== null ? ` (exit ${run.exit})` : ''}${expected}${run.why ? `: ${run.why}` : '.'}`)
             return exitFor(run)
@@ -246,7 +249,7 @@ export async function queued(parsed: Parsed, env: Env = process.env, cwd = proce
     }
     lostSince ??= Date.now()
     if (Date.now() - lostSince > 120_000) {
-      SAY(`Test runs has not answered for two minutes; ${id} may still be running there.`)
+      SAY(`Queue has not answered for two minutes; ${id} may still be running there.`)
       return 75
     }
     await new Promise((done) => setTimeout(done, 2000))
@@ -256,7 +259,7 @@ export async function queued(parsed: Parsed, env: Env = process.env, cwd = proce
 async function status(env: Env = process.env): Promise<number> {
   const { url } = where(env)
   if (!url || !(await healthy(url))) {
-    SAY('Test runs is not running.')
+    SAY('Queue is not running.')
     return 1
   }
   const body = (await (await fetch(`${url}/api/runs`)).json()) as { runs: Array<RunView & { label: string; asker: { said: string } }> }
@@ -279,7 +282,7 @@ if (import.meta.main) {
   } else if (verb === 'status') {
     process.exit(await status())
   } else {
-    process.stderr.write('usage: kehikot-queue run [--kind push|verify|review|other] [--label TEXT] [--ref REF] [--epic SLUG] [--place TOKEN] [--keep-env NAME] [--from TEXT] [--expect fail] -- COMMAND [ARG…]\n       kehikot-queue status\n')
+    process.stderr.write('usage: kehikot-queue run [--kind verify|build|task|push|review] [--label TEXT] [--ref REF] [--epic SLUG] [--place TOKEN] [--keep-env NAME] [--from TEXT] [--expect fail] -- COMMAND [ARG…]\n       kehikot-queue status\n')
     process.exit(2)
   }
 }

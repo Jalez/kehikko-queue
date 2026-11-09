@@ -1,4 +1,4 @@
-# Test runs — notes for agents
+# Queue — notes for agents
 
 A Kehikot module: a program with its own server, page and MCP door that a
 Kehikot host frames in a container. The whole guide is
@@ -91,7 +91,7 @@ Nobody tags by hand: merging the version bump is the release.
    `module-release.yml` in Jalez/kehikko-desktop) sees that `package.json`'s
    version is newer than the latest `v*` tag and that the notes exist, creates
    the annotated tag `v<version>` on the merge commit, checks the notes,
-   typechecks and tests, then publishes the release "Test runs <version>" in the
+   typechecks and tests, then publishes the release "Queue <version>" in the
    same run. A push that keeps the version releases nothing; a newer version
    without notes fails the run. If a check fails nothing is published: fix it
    in a PR with a newer version.

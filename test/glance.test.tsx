@@ -117,7 +117,7 @@ describe('what a glance says', () => {
       ['p1', 'passed', 2],
       ['e1', 'passed', 2],
     ])
-    expect(resultsSaid(results)).toBe('The last 3: 2 passed, 1 failed. Latest: “red first” passed.')
+    expect(resultsSaid(results)).toBe('The last 3: 2 passed, 1 failed. Latest: “red first” (push) passed.')
     expect(resultsSaid([])).toBe('No results yet.')
   })
 })
@@ -136,7 +136,7 @@ describe('the page at each size', () => {
       expect(pictures.map((one) => one.getAttribute('aria-label'))).toEqual([
         '1 of 2 running, 1 waiting.',
         'Load 3.2 on 12 cores; new runs wait above 9.0. Over the last 2 min it went from 1.5 to 3.2.',
-        'The last 3: 2 passed, 1 failed. Latest: “red first” passed.',
+        'The last 3: 2 passed, 1 failed. Latest: “red first” (push) passed.',
       ])
       expect(document.querySelectorAll('[data-run]')).toHaveLength(0)
       expect(screen.queryByTestId('machine')).toBeNull()
@@ -355,7 +355,7 @@ describe('the tiles drawn at each width', () => {
     expect(tip('tile-load').textContent).toContain('Load 3.2')
     fireEvent.focus(plot('tile-results'))
     fireEvent.keyDown(plot('tile-results'), { key: 'Home' })
-    expect(tip('tile-results').textContent).toBe(`Failed in 2 sbroken${clock(3000)}`)
+    expect(tip('tile-results').textContent).toBe(`Failed in 2 sbrokenPush · ${clock(3000)}`)
     fireEvent.blur(plot('tile-results'))
     expect(tip('tile-results').textContent).toBe('')
   })

@@ -18,6 +18,7 @@ import { api as realApi, type Api, type Overview } from '@/wire/api'
 import { useKehikot, type Host } from '@/wire/use-kehikot'
 
 import { jumpFor, originOf, type GotoParams } from '../queue/origin.ts'
+import { kindSaid } from '../queue/kinds.ts'
 import type { RunView } from '../queue/queue.ts'
 
 type Press = { item: string; value?: PressValue }
@@ -156,13 +157,13 @@ export function Screen({
     <div ref={root} className="flex h-screen min-w-0 flex-col text-sm" data-level={level}>
       {host.where === 'unhosted' ? (
         <header className="flex min-h-9 shrink-0 items-center gap-2 border-b px-2">
-          <span className="text-xs font-medium">Test runs</span>
+          <span className="text-xs font-medium">Queue</span>
           <HeaderMenus items={items} onPress={onPress} />
         </header>
       ) : null}
       <main className={`flex min-h-0 flex-1 flex-col overflow-auto ${level === 'glance' || level === 'list' ? 'gap-2 p-2' : 'gap-3 p-3'}`}>
         {cover ? (
-          <Cover state={cover} name="Test runs" onRetry={read} />
+          <Cover state={cover} name="Queue" onRetry={read} />
         ) : (
           <>
             {overview ? <Glance runs={runs} machine={overview.machine} now={now()} width={given ? given.width - (level === 'glance' || level === 'list' ? 16 : 24) : undefined} /> : null}
@@ -179,7 +180,7 @@ export function Screen({
             ) : null}
             {overview && !runs.length && atLeast(level, 'list') ? (
               <p className="text-muted-foreground text-xs" data-testid="empty">
-                {showing === 'here' && host.projectPath ? 'No test runs for this project lately. Every project’s: pick This computer as the scope in its settings.' : 'No test runs lately.'}
+                {showing === 'here' && host.projectPath ? 'Nothing queued for this project lately. Every project’s: pick This computer as the scope in its settings.' : 'Nothing queued lately.'}
               </p>
             ) : null}
             {atLeast(level, 'list') ? (
@@ -321,7 +322,7 @@ function RunRow({
         <span className="min-w-0 flex-1 truncate font-medium" title={run.argv.join(' ')}>
           {run.label}
         </span>
-        <Badge variant="outline">{run.kind}</Badge>
+        <Badge variant="outline">{kindSaid(run.kind)}</Badge>
         {jump}
         {children}
       </div>
@@ -391,7 +392,7 @@ function RunDrawer({ run, api, jump, jumpSaid, onCancel }: { run: RunView; api: 
         <div className="flex flex-col gap-1">
           <div className="flex items-center gap-2">
             <StateMark run={run} />
-            <Badge variant="outline">{run.kind}</Badge>
+            <Badge variant="outline">{kindSaid(run.kind)}</Badge>
             {jump}
             {run.state === 'queued' || run.state === 'running' ? <Cancel run={run} onCancel={onCancel} /> : null}
           </div>
