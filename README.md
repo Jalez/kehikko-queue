@@ -44,6 +44,8 @@ kehikot-queue run --kind push --label "pre-push monorepo" --ref '!3907' -- bun r
 kehikot-queue run --kind build --label "vite build" -- bun run build
 kehikot-queue run --kind task --label "install" -- bun install
 kehikot-queue run --preflight 'test -d node_modules' -- bun test
+kehikot-queue run --kind typecheck --session "$SESSION_ID" -- tsc --noEmit
+kehikot-queue lease dev --port-range 5280-5299 -- bun run dev -- --port {port}
 kehikot-queue wait r1a2b3c4
 kehikot-queue status
 ```
@@ -63,7 +65,28 @@ lockfile is said as "Would fail" and the run is queued anyway. A refused run is 
 CLI says why and exits 1. A run that fails within seconds with a known sign of a folder problem (an
 untrusted mise config, a module not found, a program not found) says what to fix.
 
-Options: `--kind verify|build|task|push|review` (default `verify`), `--label TEXT`, `--ref REF` (repeatable; `!3907`, `#12`,
+**A transparent stand-in for the command.** `run` reads no stdin, says its own lines on stderr only,
+streams the command's output on stdout and exits with its code, so a shell guard can rewrite a heavy
+command to it unchanged. Ctrl-C at a terminal, a SIGTERM (a tool's timeout) or a SIGHUP cancels a run
+that is waiting; a CLI killed outright leaves a waiting run that the queue cancels when it notices.
+Without `--label` it labels the run from the folder and the command (`app: bun run typecheck`). The
+session that asks is `--session ID`, else `KEHIKOT_SESSION_ID`, else the agent CLI's own session
+variable, and shows with the run on the page, in the footer and in `queue_status`, with its place in
+line. Inside a queued run (`KEHIKOT_QUEUE_RUN` is set for it) `run` runs the command at once: a run
+never waits behind itself.
+
+**Limits by kind.** Besides "Runs at once" and the load guard, each kind has its own limit,
+machine-wide, in Kehikot's Settings › Modules: e2e (Playwright) 1, typecheck 1, test suites 2, builds
+1, other tasks 2. A run whose kind is full waits, and the next in line whose kind has room starts.
+
+**Dev-server leases.** `lease dev -- COMMAND` runs a dev server in one of a few slots ("Dev servers at
+once", default 3) on a free port of `--port-range` (default 5280-5299), given as `$PORT` and in place
+of `{port}`. Queue starts it in a process group of its own and stops that group — by its pid, never by
+name — when the command ends, when `--ttl` minutes run out (default 60), or when the agent session
+that asked ends. Agents use `queue_lease` (released with `queue_cancel`). Leases show on the page,
+with a Stop button.
+
+Options: `--kind verify|typecheck|e2e|build|task|push|review` (default `verify`; `unit` and `playwright` say verify and e2e), `--session ID`, `--agent NAME`, `--label TEXT`, `--ref REF` (repeatable; `!3907`, `#12`,
 `gh#12`), `--epic SLUG`, `--place TOKEN` (or `KEHIKOT_PLACE`: a session's Kehikot place, so the run
 is filed under its epic), `--keep-env NAME` (keep a variable that looks like a secret, e.g. a token
 a test needs), `--from TEXT` (who is asking, e.g. "pre-push hook").

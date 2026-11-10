@@ -21,6 +21,7 @@ import { FAST_MS, signatureOf } from './preflight.ts'
  * RUNNING carries on in its own process group, and is picked up again by its pid and its exit file.
  */
 
+export { whoAsked } from './who.ts'
 export { DEFAULT_KIND, isTests, KIND_WORDS, kindSaid, RUN_KINDS, type Kind } from './kinds.ts'
 import { publishedKind, type Kind } from './kinds.ts'
 export type State = 'queued' | 'running' | 'passed' | 'failed' | 'cancelled'
@@ -43,7 +44,17 @@ export interface Asker {
   token: string | null
   /** The conversation the place names, when it names one. */
   conversation: string | null
+  /** The agent session that asked, as its agent CLI names it (passed by a hook, `--session`, or read from its environment). */
+  session?: string | null
+  /** Which agent asked, in its own words: a subagent's name, "claude-code". */
+  agent?: string | null
+  /**
+   * The process that asked and waits (the CLI's own pid): a run still WAITING when it has gone is
+   * cancelled, since nobody will read its result. Null: not known, or an agent's MCP call.
+   */
+  holder?: number | null
 }
+
 
 export interface Ask {
   argv: string[]
@@ -334,7 +345,7 @@ export class Queue {
     return {
       ...rest,
       position: at < 0 ? null : at + 1,
-      waiting: run.state === 'queued' ? waitingSaid(run.id, waiting, this.#running().length, this.options.load(), this.#clock(), this.options.capacity()) : null,
+      waiting: run.state === 'queued' ? waitingSaid(run.id, waiting, this.#running(), this.options.load(), this.#clock(), this.options.capacity()) : null,
     }
   }
 
@@ -398,6 +409,14 @@ export class Queue {
   /** Look at the load and the runs: start what may start, and notice what ended unwatched. */
   tick(): void {
     const dir = this.options.dir
+    /* A waiting run whose asker has gone (its CLI was killed, its shell closed): nobody will read it. */
+    for (const run of this.#waiting()) {
+      if (typeof run.asker.holder === 'number' && run.asker.holder > 0 && !alive(run.asker.holder)) {
+        Object.assign(run, { state: 'cancelled', finishedAt: this.#clock(), why: 'The command that asked for it stopped waiting before it started.' })
+        this.#env.delete(run.id)
+        this.#changed(run)
+      }
+    }
     for (const run of this.#running()) {
       const log = logFile(logsDir(dir), run.id)
       capLog(log, LOG_MOST * 4)
@@ -411,7 +430,7 @@ export class Queue {
       }
     }
     for (;;) {
-      const decision = decide(this.#waiting(), this.#running().length, this.options.load(), this.#clock(), this.options.capacity())
+      const decision = decide(this.#waiting(), this.#running(), this.options.load(), this.#clock(), this.options.capacity())
       if (decision.start === null) break
       this.#start(this.#runs.get(decision.start)!, decision.overdue)
     }
@@ -429,7 +448,8 @@ export class Queue {
     }
     try {
       if (!existsSync(run.cwd)) throw new Error(`${run.cwd} is not there any more.`)
-      const started = this.#spawner.start({ argv: run.argv, cwd: run.cwd, env, log: logFile(logsDir(this.options.dir), run.id), exit: exitFile(exitDir(this.options.dir), run.id) })
+      /* KEHIKOT_QUEUE_RUN: a `kehikot-queue run` inside this run runs at once instead of queueing behind it. */
+      const started = this.#spawner.start({ argv: run.argv, cwd: run.cwd, env: { ...env, KEHIKOT_QUEUE_RUN: run.id }, log: logFile(logsDir(this.options.dir), run.id), exit: exitFile(exitDir(this.options.dir), run.id) })
       run.state = 'running'
       run.pid = started.pid
       this.#env.delete(run.id)

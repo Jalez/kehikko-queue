@@ -5,7 +5,7 @@ import { join } from 'node:path'
 
 import { beforeInfo, registryDir } from 'kehikot-module-protocol/serve'
 
-import { exitFor, machineDir, parse, queueDir, where } from '../bin/kehikot-queue.ts'
+import { autoLabel, exitFor, machineDir, parse, queueDir, where } from '../bin/kehikot-queue.ts'
 import { cliDoor } from '../queue/cli-door.ts'
 import { cliToken, queueDir as serverQueueDir } from '../queue/machine.ts'
 import { Queue } from '../queue/queue.ts'
@@ -84,7 +84,7 @@ describe('through the queue', () => {
     const passed = await cli(['run', '--', 'sh', '-c', 'exit 0'], env)
     expect(passed.code).toBe(0)
     expect(q.list().map((run) => [run.label, run.state, run.asker.said.startsWith('pre-push hook') || run.asker.said.startsWith('a shell')])).toEqual([
-      ['sh -c exit 0', 'passed', true],
+      [autoLabel(['sh', '-c', 'exit 0'], tmpdir()), 'passed', true],
       ['pre-push', 'failed', true],
     ])
   })

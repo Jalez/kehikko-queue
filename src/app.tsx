@@ -20,6 +20,9 @@ import { useKehikot, type Host } from '@/wire/use-kehikot'
 import { jumpFor, originOf, type GotoParams } from '../queue/origin.ts'
 import { kindSaid } from '../queue/kinds.ts'
 import type { RunView } from '../queue/queue.ts'
+import type { LeaseView } from '../queue/leases.ts'
+import { askedSaid, whoAsked } from '../queue/who.ts'
+import { KIND_WORDS, LIMITED } from '../queue/kinds.ts'
 
 type Press = { item: string; value?: PressValue }
 
@@ -143,7 +146,7 @@ export function Screen({
      what went wrong, so a container folded to its header and footer still says them. An older host
      draws no footer, and the page keeps saying what went wrong itself. */
   const drawsFooter = host.where === 'hosted' && host.drawsFooter === true
-  const footerSaid = drawsFooter && !cover ? JSON.stringify(footerItems({ runs, machine: overview?.machine ?? null, trouble: said })) : null
+  const footerSaid = drawsFooter && !cover ? JSON.stringify(footerItems({ runs, machine: overview?.machine ?? null, trouble: said, leases: overview?.leases ?? [] })) : null
   const { footer } = host
   useEffect(() => {
     if (footerSaid) footer?.(JSON.parse(footerSaid))
@@ -152,6 +155,7 @@ export function Screen({
   const waiting = runs.filter((run) => run.state === 'queued')
   const running = runs.filter((run) => run.state === 'running')
   const finished = runs.filter((run) => run.state !== 'queued' && run.state !== 'running')
+  const leased = (overview?.leases ?? []).filter((lease) => lease.state === 'running')
 
   return (
     <div ref={root} className="flex h-screen min-w-0 flex-col text-sm" data-level={level}>
@@ -207,6 +211,7 @@ export function Screen({
             <Group title="Running" runs={running} compact={level === 'list'}>
               {(run) => row(run, <Cancel run={run} onCancel={() => void act(api.cancel(run.id))} />)}
             </Group>
+            <Leases leases={leased} most={overview?.machine.leasesMost ?? null} compact={level === 'list'} onStop={(id) => void act(api.release(id))} />
             <Group title="Finished" runs={finished} compact={level === 'list'}>
               {(run) => row(run)}
             </Group>
@@ -226,8 +231,50 @@ function MachineLine({ overview }: { overview: Overview }) {
   const { machine } = overview
   return (
     <p className="text-muted-foreground text-xs" data-testid="machine">
-      {machine.cores} cores · load {machine.load.toFixed(1)} · at most {machine.most} at once · nothing new above load {machine.loadAbove.toFixed(1)}, except after {machine.waitMinutes} min waiting · change in Kehikot’s Settings › Modules
+      {machine.cores} cores · load {machine.load.toFixed(1)} · at most {machine.most} at once{perKindSaid(machine.perKind)} · nothing new above load {machine.loadAbove.toFixed(1)}, except after {machine.waitMinutes} min waiting · change in Kehikot’s Settings › Modules
     </p>
+  )
+}
+
+/** The per-kind limits, short: " (1 typecheck, 1 e2e tests, 2 tests, 1 build, 2 task)". Empty from an older server. */
+export function perKindSaid(perKind: Partial<Record<string, number>> | undefined): string {
+  const said = LIMITED.filter((kind) => (perKind?.[kind] ?? 0) > 0).map((kind) => `${perKind![kind]} ${KIND_WORDS[kind]}`)
+  return said.length ? ` (${said.join(', ')})` : ''
+}
+
+/**
+ * The leased dev servers: what runs, on which port, who leased it and until when, and Stop. The port
+ * is said as text: a module's strings are never links.
+ */
+function Leases({ leases, most, compact, onStop }: { leases: LeaseView[]; most: number | null; compact: boolean; onStop: (id: string) => void }) {
+  if (!leases.length) return null
+  return (
+    <section aria-label="Dev servers" className={`flex flex-col ${compact ? 'gap-0.5' : 'gap-1'}`} data-testid="leases">
+      <h2 className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
+        Dev servers ({leases.length}{most !== null ? ` of ${most}` : ''})
+      </h2>
+      <ul className={`flex flex-col ${compact ? 'gap-0' : 'gap-1'}`}>
+        {leases.map((lease) => (
+          <li key={lease.id} className={compact ? 'flex min-w-0 items-center gap-1.5 px-1 text-xs' : 'rounded-md border px-2 py-1.5'} data-lease={lease.id}>
+            <div className="flex min-w-0 items-center gap-2">
+              <LoaderCircle className="text-muted-foreground size-3.5 shrink-0" aria-hidden />
+              <span className="min-w-0 flex-1 truncate font-medium" title={lease.argv.join(' ')}>
+                {lease.label}
+              </span>
+              <span className="text-muted-foreground shrink-0 text-xs tabular-nums">:{lease.port}</span>
+              <Button variant="ghost" size="sm" className="size-6 p-0" aria-label={`Stop the dev server “${lease.label}”`} onClick={() => onStop(lease.id)}>
+                <X className="size-3" />
+              </Button>
+            </div>
+            {compact ? null : (
+              <p className="text-muted-foreground mt-0.5 text-xs break-words">
+                localhost:{lease.port} · leased by {whoAsked(lease.asker)} · until {short(lease.until)}
+              </p>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
   )
 }
 
@@ -281,7 +328,10 @@ function RunLine({ run, focused, onOpen }: { run: RunView; focused: boolean; onO
       >
         <StateMark run={run} iconOnly />
         {/* A label is the asker's words: text, never markup. */}
-        <span className="min-w-0 flex-1 truncate">{run.label}</span>
+        <span className="min-w-0 flex-1 truncate">
+          {run.label}
+          {run.state === 'queued' ? <span className="text-muted-foreground"> · {whoAsked(run.asker)}</span> : null}
+        </span>
         <span className="text-muted-foreground shrink-0 tabular-nums">{when}</span>
       </button>
     </li>
@@ -329,7 +379,7 @@ function RunRow({
       {detailed ? (
         <p className="text-muted-foreground mt-0.5 text-xs break-words">
           {run.state === 'queued' && run.waiting ? `${run.waiting} ` : ''}
-          From {run.asker.said}
+          From {askedSaid(run.asker)}
           {run.epic ? ` · epic ${run.epic}` : ''}
           {run.refs.length ? ` · for ${run.refs.join(', ')}` : ''} · {waited}
           {ran !== null ? ` · ${ran}` : ''}
@@ -338,7 +388,7 @@ function RunRow({
         </p>
       ) : (
         <p className="text-muted-foreground mt-0.5 truncate text-xs">
-          {run.state === 'queued' && run.waiting ? run.waiting : ran ?? waited}
+          {run.state === 'queued' && run.waiting ? `${run.waiting} · ${whoAsked(run.asker)}` : ran ?? waited}
           {expected ? ` · ${expected}` : ''}
         </p>
       )}
@@ -401,7 +451,8 @@ function RunDrawer({ run, api, jump, jumpSaid, onCancel }: { run: RunView; api: 
             {ran !== null ? ` · ran ${seconds(ran)}` : ''}
           </p>
           <p className="break-words" data-testid="drawer-origin">
-            From {run.asker.said}
+            {run.state === 'queued' && run.position !== null ? `#${run.position} in line · ` : ''}
+            From {askedSaid(run.asker)}
             {origin?.epic ? ` · epic ${origin.epic}` : ''}
             {origin?.branch ? ` · branch ${origin.branch}` : ''}
           </p>

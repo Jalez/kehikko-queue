@@ -1,6 +1,7 @@
 import { answered, ask, subscribe } from 'kehikot-module-protocol/client'
 
 import type { RunView } from '../../queue/queue.ts'
+import type { LeaseView } from '../../queue/leases.ts'
 
 /** One look at the machine's 1-minute load: `at` in ms since the epoch. */
 export interface Sample {
@@ -16,10 +17,16 @@ export interface Machine {
   waitMinutes: number
   /** The load over the last few minutes, oldest first; empty from a server that does not sample. */
   samples?: Sample[]
+  /** How many of each limited kind may run at once (0: no limit of its own); absent from an older server. */
+  perKind?: Partial<Record<string, number>>
+  /** How many dev servers may be leased at once; absent from an older server. */
+  leasesMost?: number
 }
 
 export interface Overview {
   runs: RunView[]
+  /** The dev-server leases: running ones first, then the few that ended lately. */
+  leases?: LeaseView[]
   machine: Machine
 }
 
@@ -35,6 +42,8 @@ export interface Api {
   output(id: string, from: number): Promise<Output>
   cancel(id: string): Promise<Overview>
   move(id: string, to: 'up' | 'down' | 'top'): Promise<Overview>
+  /** Stop a leased dev server. */
+  release(id: string): Promise<Overview>
   /**
    * Hear when the queue changed: once as the stream opens (and again each time it reopens — after a
    * drop, or when the page is shown again), then at every change. Never on a clock; closed while the
@@ -45,11 +54,12 @@ export interface Api {
   outputChanges(id: string, onChange: () => void): () => void
 }
 
-const overview = (got: { runs?: RunView[]; machine?: Machine }): Overview => ({ runs: got.runs ?? [], machine: got.machine ?? { cores: 0, load: 0, most: 0, loadAbove: 0, waitMinutes: 0 } })
+type Got = { runs?: RunView[]; leases?: LeaseView[]; machine?: Machine }
+const overview = (got: Got): Overview => ({ runs: got.runs ?? [], leases: got.leases ?? [], machine: got.machine ?? { cores: 0, load: 0, most: 0, loadAbove: 0, waitMinutes: 0 } })
 
 export const api: Api = {
   async runs() {
-    return overview(answered(await ask<{ runs?: RunView[]; machine?: Machine }>('./api/runs')))
+    return overview(answered(await ask<Got>('./api/runs')))
   },
   async output(id, from) {
     const got = answered(await ask<{ text?: string; next?: number; size?: number }>('./api/output', { query: { id, from: String(from) } }))
@@ -58,9 +68,12 @@ export const api: Api = {
   changes: (onChange) => subscribe('./api/runs/events', () => onChange(), { probe: true }),
   outputChanges: (id, onChange) => subscribe('./api/output/events', () => onChange(), { query: { id }, probe: true }),
   async cancel(id) {
-    return overview(answered(await ask<{ runs?: RunView[]; machine?: Machine }>('./api/act', { body: { op: 'cancel', id } })))
+    return overview(answered(await ask<Got>('./api/act', { body: { op: 'cancel', id } })))
+  },
+  async release(id) {
+    return overview(answered(await ask<Got>('./api/act', { body: { op: 'release', id } })))
   },
   async move(id, to) {
-    return overview(answered(await ask<{ runs?: RunView[]; machine?: Machine }>('./api/act', { body: { op: 'move', id, to } })))
+    return overview(answered(await ask<Got>('./api/act', { body: { op: 'move', id, to } })))
   },
 }

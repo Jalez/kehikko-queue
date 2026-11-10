@@ -1,5 +1,5 @@
-import { CLI_TOKEN, ASK, mcp, queue } from '../doors.ts'
+import { CLI_TOKEN, ASK, leases, mcp, queue } from '../doors.ts'
 import { cliDoor } from './cli-door.ts'
 
 /** The CLI's door and the fence in front of `/mcp`, as mounted on both servers (`vite.config.ts`, `serve.ts`). */
-export const QUEUE_DOOR = cliDoor({ queue, token: CLI_TOKEN, ask: () => ASK.options, mcp: (rpc, query, tick) => mcp(rpc, query, queue(), tick) })
+export const QUEUE_DOOR = cliDoor({ queue, leases, token: CLI_TOKEN, ask: () => ASK.options, mcp: (rpc, query, tick) => mcp(rpc, query, queue(), tick) })

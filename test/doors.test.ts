@@ -97,8 +97,8 @@ const placeFetch = (async (url: string | URL | Request) => {
 }) as typeof fetch
 
 describe('the MCP door', () => {
-  test('offers the four tools', () => {
-    expect(tools().map((one) => one.name)).toEqual(['queue_run', 'queue_status', 'queue_wait', 'queue_cancel'])
+  test('offers the five tools', () => {
+    expect(tools().map((one) => one.name)).toEqual(['queue_run', 'queue_status', 'queue_wait', 'queue_lease', 'queue_cancel'])
   })
   test('queue_run takes the session and epic from its place; queue_wait answers the exit code and the output', async () => {
     ASK.options = { fetch: placeFetch, env: { KEHIKOT_ORIGINS: 'http://127.0.0.1:9' } }
@@ -200,3 +200,19 @@ describe('the page\'s writes', () => {
     expect((await answer('POST', '/api/act', new URLSearchParams(), { op: 'seen-all' }, TICKET, q))?.status).toBe(400)
   })
 })
+
+describe('per-kind limits and dev-server leases at the agent door', () => {
+  test('queue_lease is offered; queue_status says the limits, each run\'s place and who asked, and the dev servers', async () => {
+    expect(tools().map((one) => one.name)).toContain('queue_lease')
+    q.enqueue({ argv: ['sh', '-c', 'sleep 5'], cwd: tmpdir(), env: { PATH: process.env.PATH ?? '' }, kind: 'verify', label: 'one', refs: [], epic: null, project: null, asker: { via: 'cli', said: 'a shell, in /tmp', token: null, conversation: null } })
+    q.enqueue({ argv: ['sh', '-c', 'sleep 5'], cwd: tmpdir(), env: { PATH: process.env.PATH ?? '' }, kind: 'verify', label: 'two', refs: [], epic: null, project: null, asker: { via: 'cli', said: 'a shell, in /tmp', token: null, conversation: null } })
+    q.enqueue({ argv: ['sh', '-c', 'sleep 5'], cwd: tmpdir(), env: { PATH: process.env.PATH ?? '' }, kind: 'verify', label: 'three', refs: [], epic: null, project: null, asker: { via: 'cli', said: 'a shell, in /tmp', token: null, conversation: null, agent: 'Claude Code', session: 'sess12345678' } })
+    const reply = await mcp({ id: 1, method: 'tools/call', params: { name: 'queue_status', arguments: {} } }, new URLSearchParams(), q)
+    const text = ((reply.body as { result: { content: Array<{ text: string }> } }).result.content[0]!).text
+    expect(text).toContain('of each kind at most')
+    expect(text).toContain('#1 in line, from Claude Code (session sess1234), a shell, in /tmp')
+    expect(text).toContain('Dev servers (')
+    for (const run of q.list()) q.cancel(run.id, { person: true })
+  })
+})
+

@@ -93,10 +93,11 @@ export const DECLARED: Manifest = manifestSchema.parse({
     + 'verify for tests, build, or task for anything else — label, ref, and preflight for a quick readiness check) and wait for '
     + 'its result as long as it takes: run the `kehikot-queue wait <id>` line it answers as a background shell command, or call '
     + '`queue_wait`; never poll the load. A failed run\'s answer has the end of its output. When nothing waits on a run as it '
-    + 'ends, Kehikot types its result into the session that asked.',
+    + 'ends, Kehikot types its result into the session that asked. A dev server goes in a leased slot: `queue_lease` (release it '
+    + 'with `queue_cancel` when done) or `kehikot-queue lease dev -- <command>` from a shell.',
   /* What every agent session is told about it (protocol 2.36.0): beside its name where it is on the
      kehikko, and — for a session on a kehikko it is NOT on, while it is installed here — the second. */
-  agentSays: "Run heavy commands — tests, builds, big installs — through the Queue (queue_run, then its wait line as a background shell command) instead of in the shell, so sessions don't collide.",
+  agentSays: "Run heavy commands — tests, builds, big installs — through the Queue (queue_run, then its wait line as a background shell command) instead of in the shell, and dev servers through queue_lease, so sessions don't collide.",
   absentSays: "Don't start heavy commands (test suites, builds, big installs) directly. If the person insists, suggest adding Queue to this kehikko so runs don't collide.",
   /* "How to use" (protocol 2.52.0). */
   help: HELP,
@@ -110,7 +111,7 @@ export const DECLARED: Manifest = manifestSchema.parse({
   mcp: {
     url: '/mcp',
     transport: 'http',
-    about: 'Queue heavy work on this computer — test suites, builds, other resource-intensive commands (queue_run), see the queue (queue_status), wait for a result (queue_wait), cancel your own (queue_cancel).',
+    about: 'Queue heavy work on this computer — test suites, builds, other resource-intensive commands (queue_run), see the queue (queue_status), wait for a result (queue_wait), cancel your own (queue_cancel), and lease a slot for a dev server (queue_lease).',
   },
   extensions: { emits: [], consumes: [] },
   /* Runs are this computer's, not a part's: nothing to narrow. */

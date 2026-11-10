@@ -5,6 +5,7 @@ import { EPIC_SLUG, LIMITS, readTrackerRef } from 'kehikot-module-protocol'
 
 import type { Expect } from './expect.ts'
 import { ARGV_BYTES_MOST, ARGV_MOST, DEFAULT_KIND, LABEL_MOST, RUN_KINDS, type Kind } from './queue.ts'
+import { kindNamed } from './kinds.ts'
 
 /**
  * What a caller may ask the queue to run, checked before anything is held: the command (an argv, or
@@ -42,7 +43,8 @@ export function cwdOf(cwd: unknown): Checked<string> {
 
 export function kindOf(kind: unknown): Checked<Kind> {
   if (kind === undefined || kind === null) return { ok: true, value: DEFAULT_KIND }
-  return (RUN_KINDS as readonly unknown[]).includes(kind) ? { ok: true, value: kind as Kind } : { ok: false, why: `kind is one of ${RUN_KINDS.join(', ')}: verify for tests (the default), build for a build, task for any other heavy command, push for a hook somebody waits on, review for a review round.` }
+  const named = kindNamed(kind)
+  return named ? { ok: true, value: named } : { ok: false, why: `kind is one of ${RUN_KINDS.join(', ')}: verify for tests (the default; unit says the same), typecheck for tsc, e2e for browser tests (playwright says the same), build for a build, task for any other heavy command, push for a hook somebody waits on, review for a review round.` }
 }
 
 export function labelOf(label: unknown, argv: readonly string[]): Checked<string> {

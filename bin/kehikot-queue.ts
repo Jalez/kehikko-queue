@@ -3,13 +3,30 @@
  * kehikot-queue — put heavy work (tests, a build, any other heavy command) in this computer's
  * Queue, wait for it, and exit with its exit code. For a shell, a script and a git hook:
  *
- *   kehikot-queue run [--kind verify|build|task|push|review] [--label TEXT] [--ref REF]… [--epic SLUG]
+ *   kehikot-queue run [--kind verify|typecheck|e2e|build|task|push|review] [--label TEXT] [--ref REF]… [--epic SLUG]
  *                     [--place TOKEN] [--keep-env NAME]… [--from TEXT] [--expect fail]
+ *                     [--session ID] [--agent NAME]
  *                     [--preflight 'SHELL LINE'] [--no-checks] -- COMMAND [ARG…]
+ *   kehikot-queue lease dev [--port-range FROM-TO] [--ttl MINUTES] [--label TEXT] [--session ID] [--agent NAME] -- COMMAND [ARG…]
  *   kehikot-queue wait ID
  *   kehikot-queue status
  *
- * --kind: verify for tests (the default), build for a build, task for any other heavy command.
+ * --kind: verify for tests (the default; unit says the same), typecheck for tsc, e2e for browser
+ * tests (playwright says the same), build for a build, task for any other heavy command. Each has
+ * its own limit of how many run at once on this computer (Settings › Modules).
+ *
+ * Safe as a transparent stand-in for the command itself (what a shell guard rewrites a heavy
+ * command to): it reads no stdin, says its own lines on stderr only, puts the command's output on
+ * stdout, and exits with the command's exit code. Without --label it labels the run from the
+ * command and the folder. The asking session is --session, else KEHIKOT_SESSION_ID, else the
+ * agent CLI's own session variable. Inside a queued run (KEHIKOT_QUEUE_RUN) it runs the command at
+ * once: a run never waits behind itself.
+ *
+ * `lease dev` runs a dev server in one of a few leased slots (Settings › Modules, "Dev servers at
+ * once"), on a free port of --port-range (default 5280-5299), given as $PORT and in place of {port}
+ * in the command. Queue starts it in a process group of its own and stops that group when this
+ * command ends (Ctrl-C, the shell closing it), when --ttl runs out (default 60 minutes), or when
+ * the agent session that asked ends. It streams the server's output meanwhile.
  *
  * It asks Queue to run COMMAND in this folder with this environment (less anything that looks
  * like a secret, unless named with --keep-env), prints where it is in the queue while it waits,
@@ -32,10 +49,10 @@
  * KEHIKOT_QUEUE_URL. Gets in with the token in the queue's own folder, which only this user can
  * read. Only node's built-in modules here, so this one file can be linked onto PATH as it is.
  */
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 
 const ID = 'kehikot.queue'
 const TOKEN_HEADER = 'x-kehikot-queue-token'
@@ -95,11 +112,44 @@ export interface Parsed {
   preflight: string[] | null
   /** False: skip the built-in checks of the folder. */
   checks: boolean
+  /** The agent session that asks, when known. */
+  session: string | null
+  /** Which agent asks, in its own words. */
+  agent: string | null
   argv: string[]
 }
 
+/** The asking agent session's id: as passed, else as its agent CLI says it in the environment. */
+export function sessionOf(env: Env): string | null {
+  const said = env.KEHIKOT_SESSION_ID || env.CLAUDE_CODE_SESSION_ID || env.CODEX_SESSION_ID || ''
+  return /^[\w.:-]{1,128}$/.test(said) ? said : null
+}
+
+/** Which agent asks, in a few words: as passed, else what its environment says. */
+export function agentOf(env: Env): string | null {
+  if (env.KEHIKOT_AGENT) return env.KEHIKOT_AGENT.slice(0, 60)
+  if (env.CLAUDECODE) return 'Claude Code'
+  if (env.CODEX_SANDBOX || env.CODEX_SESSION_ID) return 'Codex'
+  return null
+}
+
+/** How the run is labelled when nobody said: the folder, and the command's own words, short. */
+export function autoLabel(argv: readonly string[], cwd: string): string {
+  const shell = /(^|\/)(sh|bash|zsh|dash)$/.test(argv[0] ?? '')
+  const at = shell ? argv.findIndex((one) => /^-l?c$/.test(one)) : -1
+  let words = at >= 0 && argv[at + 1] !== undefined ? argv[at + 1]! : argv.join(' ')
+  /* Leading `env`, `VAR=value` and `cd <dir> &&` say nothing about what runs. */
+  words = words.replace(/^\s*cd\s+\S+\s*&&\s*/, '').replace(/^\s*(env\s+)?(\w+=\S*\s+)+/, '').replace(/\s+/g, ' ').trim()
+  const folder = basename(cwd)
+  const label = folder ? `${folder}: ${words}` : words
+  return label.length > 100 ? `${label.slice(0, 99)}…` : label
+}
+
+/* The queue's other words for kinds (queue/kinds.ts), spelled here because this file imports only node's own. */
+const KIND_ALIASES: Record<string, string> = { unit: 'verify', test: 'verify', tests: 'verify', playwright: 'e2e', tsc: 'typecheck' }
+
 export function parse(args: string[], env: Env = process.env): Parsed | string {
-  const out: Parsed = { kind: 'verify', label: null, refs: [], epic: null, place: env.KEHIKOT_PLACE || null, keep: [], from: null, expect: null, preflight: null, checks: true, argv: [] }
+  const out: Parsed = { kind: 'verify', label: null, refs: [], epic: null, place: env.KEHIKOT_PLACE || null, keep: [], from: null, expect: null, preflight: null, checks: true, session: sessionOf(env), agent: agentOf(env), argv: [] }
   for (let at = 0; at < args.length; at++) {
     const arg = args[at]!
     if (arg === '--') {
@@ -115,6 +165,8 @@ export function parse(args: string[], env: Env = process.env): Parsed | string {
     else if (arg === '--keep-env') out.keep.push(value() ?? '')
     else if (arg === '--from') out.from = value() ?? null
     else if (arg === '--no-checks') out.checks = false
+    else if (arg === '--session') out.session = value()?.slice(0, 128) || null
+    else if (arg === '--agent') out.agent = value()?.slice(0, 60) || null
     else if (arg === '--preflight') {
       const line = value()?.trim()
       if (!line) return '--preflight takes one shell line, quoted: --preflight \'bun install --frozen-lockfile --dry-run\'.'
@@ -128,13 +180,14 @@ export function parse(args: string[], env: Env = process.env): Parsed | string {
   }
   if (!out.argv.length) return 'Put the command to run after --: kehikot-queue run --kind push --label "pre-push" -- bun test'
   /* The queue's kinds (queue/kinds.ts), spelled here because this file imports only node's own. */
-  if (!['verify', 'build', 'task', 'push', 'review', 'other'].includes(out.kind)) return '--kind is verify (tests, the default), build, task (any other heavy command), push (a hook somebody waits on) or review.'
+  out.kind = KIND_ALIASES[out.kind] ?? out.kind
+  if (!['verify', 'build', 'task', 'push', 'review', 'other', 'typecheck', 'e2e'].includes(out.kind)) return '--kind is verify (tests, the default; or unit), typecheck, e2e (or playwright), build, task (any other heavy command), push (a hook somebody waits on) or review.'
   return out
 }
 
 /** Run the command here, now, as if the queue were not there, and exit with its code. */
-export function direct(argv: string[], why: string): Promise<number> {
-  SAY(`${why} Running it here, now, outside the queue.`)
+export function direct(argv: string[], why: string, inside = false): Promise<number> {
+  SAY(inside ? `${why} Running it here, now.` : `${why} Running it here, now, outside the queue.`)
   return new Promise((done) => {
     const child = spawn(argv[0]!, argv.slice(1), { stdio: 'inherit' })
     child.on('error', (error) => {
@@ -144,6 +197,9 @@ export function direct(argv: string[], why: string): Promise<number> {
     child.on('exit', (code, signal) => done(code ?? 128 + signalNumber(signal)))
   })
 }
+
+/** What stops a waiting CLI: Ctrl-C at a terminal, a tool's timeout or a closed shell without one. */
+const STOPS = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const
 
 const SIGNALS: Record<string, number> = { SIGHUP: 1, SIGINT: 2, SIGQUIT: 3, SIGKILL: 9, SIGTERM: 15 }
 const signalNumber = (signal: string | null) => (signal && SIGNALS[signal]) || 1
@@ -176,11 +232,18 @@ export function exitFor(run: RunView): number {
 }
 
 export async function queued(parsed: Parsed, env: Env = process.env, cwd = process.cwd()): Promise<number> {
+  if (env.KEHIKOT_QUEUE_RUN) return direct(parsed.argv, `This is already inside queued run ${env.KEHIKOT_QUEUE_RUN}, so it does not wait behind it.`, true)
   const { url, token } = where(env)
   if (!url) return direct(parsed.argv, 'Queue is not registered on this computer.')
   if (!token) return direct(parsed.argv, 'Queue has not run on this computer yet (no token).')
   if (!(await healthy(url))) return direct(parsed.argv, `Queue is not running (nothing answered at ${url}).`)
   const headers = { 'content-type': 'application/json', [TOKEN_HEADER]: token }
+  /* A stop asked for while the run is being queued is held, and acted on as soon as its id is known. */
+  let stopAsked = false
+  const early = () => {
+    stopAsked = true
+  }
+  for (const signal of STOPS) process.once(signal, early)
 
   let answer: { ok?: boolean; id?: string; key?: string; error?: string; dropped?: string[]; warn?: string[]; refused?: boolean }
   try {
@@ -190,10 +253,14 @@ export async function queued(parsed: Parsed, env: Env = process.env, cwd = proce
       body: JSON.stringify({
         argv: parsed.argv,
         cwd,
-        env,
+        /* A terminal sees the run's colours, as it would have run here. */
+        env: process.stdout.isTTY && !env.NO_COLOR && !env.FORCE_COLOR ? { ...env, FORCE_COLOR: '1' } : env,
         keepEnv: parsed.keep,
         kind: parsed.kind,
-        label: parsed.label,
+        label: parsed.label ?? autoLabel(parsed.argv, cwd),
+        session: parsed.session,
+        agent: parsed.agent,
+        holder: process.pid,
         refs: parsed.refs,
         epic: parsed.epic,
         place: parsed.place,
@@ -205,8 +272,9 @@ export async function queued(parsed: Parsed, env: Env = process.env, cwd = proce
     })
     answer = (await response.json()) as typeof answer
   } catch (error) {
-    return direct(parsed.argv, `Queue did not take the run (${error instanceof Error ? error.message : String(error)}).`)
+    return stopAsked ? 130 : direct(parsed.argv, `Queue did not take the run (${error instanceof Error ? error.message : String(error)}).`)
   }
+  if (stopAsked && !(answer.ok && answer.id && answer.key)) return 130
   /* The folder is not ready: running it here would fail the same way. Say why, and stop. */
   if (answer.refused) {
     for (const line of (answer.error ?? 'Not queued: the folder is not ready.').split('\n')) SAY(line)
@@ -225,8 +293,11 @@ export async function queued(parsed: Parsed, env: Env = process.env, cwd = proce
     await fetch(`${url}/api/queue/cancel`, { method: 'POST', headers, body: JSON.stringify({ id, key }) }).catch(() => {})
     process.exit(130)
   }
-  process.once('SIGINT', () => void cancel())
-  process.once('SIGTERM', () => void cancel())
+  for (const signal of STOPS) {
+    process.off(signal, early)
+    process.once(signal, () => void cancel())
+  }
+  if (stopAsked) await cancel()
 
   return follow(url, token, id, { expect: parsed.expect, instead: (why) => direct(parsed.argv, why) })
 }
@@ -314,6 +385,187 @@ export async function waitOn(id: string, env: Env = process.env): Promise<number
   return follow(url, token, id, { expect: null, instead: null })
 }
 
+/** An agent CLI's own process, by its command's name. */
+const AGENT_CLI = /(^|\/)(claude|codex|gemini|opencode|vibe)(\s|$)/
+
+/**
+ * The asking agent session's process: as its environment says (KEHIKOT_SESSION_PID, CLAUDE_PID), else
+ * the nearest ancestor whose command is an agent CLI. Null when there is none: a person's own shell.
+ */
+export function sessionPidOf(env: Env = process.env, parentOf: (pid: number) => { ppid: number; command: string } | null = psParent): number | null {
+  for (const said of [env.KEHIKOT_SESSION_PID, env.CLAUDE_PID]) {
+    const pid = Number(said)
+    if (Number.isInteger(pid) && pid > 1) return pid
+  }
+  let pid = process.ppid
+  for (let step = 0; step < 16 && pid > 1; step++) {
+    const one = parentOf(pid)
+    if (!one) return null
+    if (AGENT_CLI.test(one.command)) return pid
+    pid = one.ppid
+  }
+  return null
+}
+
+function psParent(pid: number): { ppid: number; command: string } | null {
+  try {
+    const out = execFileSync('ps', ['-o', 'ppid=,comm=', '-p', String(pid)], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 2000 }).trim()
+    const match = /^(\d+)\s+(.*)$/.exec(out)
+    return match ? { ppid: Number(match[1]), command: match[2]! } : null
+  } catch {
+    return null
+  }
+}
+
+export interface LeaseParsed {
+  range: string | null
+  ttl: number | null
+  label: string | null
+  session: string | null
+  agent: string | null
+  keep: string[]
+  argv: string[]
+}
+
+export function parseLease(args: string[], env: Env = process.env): LeaseParsed | string {
+  if (args[0] !== 'dev') return 'lease takes what to lease first: kehikot-queue lease dev -- bun run dev'
+  const out: LeaseParsed = { range: null, ttl: null, label: null, session: sessionOf(env), agent: agentOf(env), keep: [], argv: [] }
+  for (let at = 1; at < args.length; at++) {
+    const arg = args[at]!
+    if (arg === '--') {
+      out.argv = args.slice(at + 1)
+      break
+    }
+    const value = () => args[++at]
+    if (arg === '--port-range') out.range = value() ?? null
+    else if (arg === '--ttl') {
+      const minutes = Number(value())
+      if (!Number.isFinite(minutes) || minutes <= 0) return '--ttl is how many minutes the lease lasts: --ttl 60.'
+      out.ttl = minutes
+    } else if (arg === '--label') out.label = value() ?? null
+    else if (arg === '--session') out.session = value()?.slice(0, 128) || null
+    else if (arg === '--agent') out.agent = value()?.slice(0, 60) || null
+    else if (arg === '--keep-env') out.keep.push(value() ?? '')
+    else return `I do not know ${arg}. Put the command after --.`
+  }
+  if (!out.argv.length) return 'Put the dev server\'s command after --: kehikot-queue lease dev --port-range 5280-5299 -- bun run dev'
+  if (out.range !== null && !/^\d{4,5}(-\d{4,5})?$/.test(out.range)) return '--port-range is FROM-TO: --port-range 5280-5299.'
+  return out
+}
+
+/** `lease dev`: run a dev server in a leased slot, print its output, and release it when this ends. */
+export async function leased(parsed: LeaseParsed, env: Env = process.env, cwd = process.cwd()): Promise<number> {
+  const { url, token } = where(env)
+  const port = parsed.range ? Number(parsed.range.split('-')[0]) : 5280
+  const here = (why: string) => {
+    /* No queue: the server runs here, as asked, on the first port of the range. */
+    SAY(`${why} Running the dev server here, now, without a lease, on port ${port}.`)
+    return new Promise<number>((done) => {
+      const argv = parsed.argv.map((word) => word.replaceAll('{port}', String(port)))
+      const child = spawn(argv[0]!, argv.slice(1), { stdio: ['ignore', 'inherit', 'inherit'], env: { ...env, PORT: String(port) } })
+      child.on('error', (error) => {
+        SAY(`could not run ${argv[0]}: ${error.message}`)
+        done(127)
+      })
+      child.on('exit', (code, signal) => done(code ?? 128 + signalNumber(signal)))
+    })
+  }
+  if (!url) return here('Queue is not registered on this computer.')
+  if (!token) return here('Queue has not run on this computer yet (no token).')
+  if (!(await healthy(url))) return here(`Queue is not running (nothing answered at ${url}).`)
+  const headers = { 'content-type': 'application/json', [TOKEN_HEADER]: token }
+  let answer: { ok?: boolean; id?: string; key?: string; port?: number; until?: number; error?: string }
+  try {
+    const response = await fetch(`${url}/api/queue/lease`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        argv: parsed.argv,
+        cwd,
+        env,
+        keepEnv: parsed.keep,
+        label: parsed.label ?? autoLabel(parsed.argv, cwd),
+        range: parsed.range,
+        ttlMinutes: parsed.ttl,
+        session: parsed.session,
+        agent: parsed.agent,
+        holder: process.pid,
+        sessionPid: sessionPidOf(env),
+        place: env.KEHIKOT_PLACE || undefined,
+        from: env.CLAUDECODE ? 'a Claude Code session\'s shell' : 'a shell',
+      }),
+    })
+    answer = (await response.json()) as typeof answer
+  } catch (error) {
+    return here(`Queue did not take the lease (${error instanceof Error ? error.message : String(error)}).`)
+  }
+  if (refusedLease(answer)) {
+    SAY(answer.error ?? 'No dev-server slot is free.')
+    return 75
+  }
+  const { id, key } = answer as { id: string; key: string }
+  SAY(`dev server leased on port ${answer.port} (http://localhost:${answer.port}), lease ${id}. It stops when this command ends, at ${new Date(answer.until ?? Date.now()).toLocaleTimeString()}, or when the session that asked ends.`)
+  let gone = false
+  const release = async (code: number) => {
+    if (gone) return
+    gone = true
+    SAY(`releasing ${id}: stopping the dev server…`)
+    await fetch(`${url}/api/queue/lease/release`, { method: 'POST', headers, body: JSON.stringify({ id, key }) }).catch(() => {})
+    process.exit(code)
+  }
+  process.once('SIGINT', () => void release(130))
+  process.once('SIGTERM', () => void release(143))
+  process.once('SIGHUP', () => void release(129))
+
+  let from = 0
+  let lostSince: number | null = null
+  for (;;) {
+    try {
+      const response = await fetch(`${url}/api/queue/lease/follow?id=${encodeURIComponent(id)}&from=${from}`, { headers: { [TOKEN_HEADER]: token } })
+      if (response.status === 404) {
+        SAY('Queue lost the lease.')
+        return 1
+      }
+      if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`)
+      lostSince = null
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let held = ''
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        held += decoder.decode(value, { stream: true })
+        let at: number
+        while ((at = held.indexOf('\n')) >= 0) {
+          const line = held.slice(0, at)
+          held = held.slice(at + 1)
+          if (!line.trim()) continue
+          const event = JSON.parse(line) as { out?: string; next?: number; end?: { exit: number | null; why: string | null } }
+          if (event.out !== undefined) {
+            process.stdout.write(event.out)
+            if (typeof event.next === 'number') from = event.next
+          }
+          if (event.end) {
+            SAY(`the dev server stopped${event.end.why ? `: ${event.end.why}` : '.'}`)
+            gone = true
+            return event.end.exit ?? 1
+          }
+        }
+      }
+    } catch {
+      /* The module went away mid-lease (an update restarts it): the server carries on in its own group. */
+    }
+    lostSince ??= Date.now()
+    if (Date.now() - lostSince > 120_000) {
+      SAY(`Queue has not answered for two minutes; the dev server of ${id} may still be running there.`)
+      return 75
+    }
+    await new Promise((done) => setTimeout(done, 2000))
+  }
+}
+
+const refusedLease = (answer: { ok?: boolean; id?: string; key?: string }) => !answer.ok || !answer.id || !answer.key
+
 async function status(env: Env = process.env): Promise<number> {
   const { url } = where(env)
   if (!url || !(await healthy(url))) {
@@ -337,12 +589,19 @@ if (import.meta.main) {
       process.exit(2)
     }
     process.exit(await queued(parsed))
+  } else if (verb === 'lease') {
+    const parsed = parseLease(rest)
+    if (typeof parsed === 'string') {
+      SAY(parsed)
+      process.exit(2)
+    }
+    process.exit(await leased(parsed))
   } else if (verb === 'wait' && rest.length === 1) {
     process.exit(await waitOn(rest[0]!))
   } else if (verb === 'status') {
     process.exit(await status())
   } else {
-    process.stderr.write('usage: kehikot-queue run [--kind verify|build|task|push|review] [--label TEXT] [--ref REF] [--epic SLUG] [--place TOKEN] [--keep-env NAME] [--from TEXT] [--expect fail] [--preflight \'LINE\'] [--no-checks] -- COMMAND [ARG…]\n       kehikot-queue wait ID\n       kehikot-queue status\n')
+    process.stderr.write('usage: kehikot-queue run [--kind verify|typecheck|e2e|build|task|push|review] [--label TEXT] [--ref REF] [--epic SLUG] [--place TOKEN] [--keep-env NAME] [--from TEXT] [--expect fail] [--session ID] [--agent NAME] [--preflight \'LINE\'] [--no-checks] -- COMMAND [ARG…]\n       kehikot-queue lease dev [--port-range FROM-TO] [--ttl MINUTES] [--label TEXT] [--session ID] [--agent NAME] -- COMMAND [ARG…]\n       kehikot-queue wait ID\n       kehikot-queue status\n')
     process.exit(2)
   }
 }

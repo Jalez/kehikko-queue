@@ -40,6 +40,10 @@ function fakeApi(runs: Overview['runs']) {
       said.push(`move ${id} ${to}`)
       return { runs, machine }
     },
+    release: async (id) => {
+      said.push(`release ${id}`)
+      return { runs, machine }
+    },
   }
   return { api, said }
 }
@@ -126,6 +130,7 @@ describe('the page is told, never asks on a clock', () => {
       },
       cancel: async () => ({ runs, machine }),
       move: async () => ({ runs, machine }),
+      release: async () => ({ runs, machine }),
     }
     const realInterval = globalThis.setInterval
     let intervals = 0

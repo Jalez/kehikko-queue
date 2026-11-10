@@ -1,6 +1,8 @@
 import { LIMITS, footerItemsSchema, type FooterItem } from 'kehikot-module-protocol'
 
 import type { RunView } from '../queue/queue.ts'
+import type { LeaseView } from '../queue/leases.ts'
+import { whoAsked } from '../queue/who.ts'
 import { counts, holding, queueNow, queueSaid, recentResults, resultsSaid, strainSaid } from './glance.ts'
 import type { Machine } from './wire/api.ts'
 
@@ -22,11 +24,21 @@ export interface FooterState {
   machine: Machine | null
   /** What went wrong reading or changing the queue, or null. */
   trouble: string | null
+  /** The dev-server leases, when the server tells them. */
+  leases?: readonly LeaseView[]
+}
+
+/** The waiting runs in line, each with who asked: "#1 bun test — Claude Code (session 9186314e)". */
+export function lineSaid(runs: readonly RunView[]): string {
+  return runs
+    .filter((run) => run.state === 'queued')
+    .map((run) => `#${run.position ?? '?'} ${run.label} — ${whoAsked(run.asker)}`)
+    .join('; ')
 }
 
 const cut = (text: string, most: number) => (text.length > most ? `${text.slice(0, most - 1)}…` : text)
 
-export function footerItems({ runs, machine, trouble }: FooterState): FooterItem[] {
+export function footerItems({ runs, machine, trouble, leases = [] }: FooterState): FooterItem[] {
   const items: unknown[] = []
   if (trouble) items.push({ kind: 'text', id: 'trouble', text: cut(trouble, LIMITS.FOOTER_TEXT), level: 'critical', tooltip: cut(trouble, LIMITS.FOOTER_TOOLTIP) })
   if (!machine) {
@@ -38,8 +50,18 @@ export function footerItems({ runs, machine, trouble }: FooterState): FooterItem
     kind: 'text',
     id: 'queue',
     text: `${now.running} of ${now.most} running · ${now.waiting ? `${now.waiting} waiting` : 'none waiting'}`,
-    tooltip: cut(queueSaid(now), LIMITS.FOOTER_TOOLTIP),
+    tooltip: cut(now.waiting ? `${queueSaid(now)} In line: ${lineSaid(runs)}.` : queueSaid(now), LIMITS.FOOTER_TOOLTIP),
   })
+  const leased = leases.filter((lease) => lease.state === 'running')
+  if (leased.length) {
+    items.push({
+      kind: 'text',
+      id: 'leases',
+      text: `${leased.length}${machine.leasesMost !== undefined ? ` of ${machine.leasesMost}` : ''} dev server${leased.length === 1 ? '' : 's'}`,
+      optional: true,
+      tooltip: cut(leased.map((lease) => `${lease.label} on port ${lease.port}, leased by ${whoAsked(lease.asker)}`).join('; '), LIMITS.FOOTER_TOOLTIP),
+    })
+  }
   const held = holding(machine)
   const share = machine.loadAbove > 0 ? Math.min(1, Math.max(0, machine.load / machine.loadAbove)) : 1
   items.push({

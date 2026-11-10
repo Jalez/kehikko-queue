@@ -18,7 +18,7 @@ describe('the kinds of run', () => {
     expect(['verify', 'build', 'task', 'other', 'later'].map(kindSaid)).toEqual(['tests', 'build', 'task', 'task', 'task'])
   })
   test('published in the protocol\'s kinds: a build or a task is other', () => {
-    expect(RUN_KINDS.map(publishedKind)).toEqual(['verify', 'other', 'other', 'push', 'review', 'other'])
+    expect(RUN_KINDS.map(publishedKind)).toEqual(['verify', 'other', 'other', 'push', 'review', 'other', 'verify', 'verify'])
   })
   test('queue_run offers every kind and says builds and other heavy work belong in it', () => {
     const run = tools().find((one) => one.name === 'queue_run')!

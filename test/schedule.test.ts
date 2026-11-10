@@ -18,8 +18,8 @@ describe('capacity', () => {
     expect(defaultCapacity(24).most).toBe(4)
   })
   test('the settings override, 0 is automatic', () => {
-    expect(capacityOf({}, 12)).toEqual(defaultCapacity(12))
-    expect(capacityOf({ most: 3, load: 0.5, wait: 2 }, 12)).toEqual({ most: 3, loadAbove: 6, waitMs: 2 * MIN })
+    expect(capacityOf({}, 12)).toMatchObject(defaultCapacity(12))
+    expect(capacityOf({ most: 3, load: 0.5, wait: 2 }, 12)).toMatchObject({ most: 3, loadAbove: 6, waitMs: 2 * MIN })
     expect(capacityOf({ most: 0 }, 12).most).toBe(2)
   })
 })
