@@ -6,6 +6,48 @@ import pkg from './package.json'
 import intro from './intro.json'
 import { SETTINGS } from './queue/fields.ts'
 
+/** "How to use" (protocol 2.52.0). Each string one line of plain text. */
+export const HELP = {
+  summary: 'One queue for heavy work on this computer: test suites, builds and big installs from every session wait their turn and start when there is room.',
+  sections: [
+    {
+      title: 'What it shows',
+      points: [
+        'At the top, three tiles: the queue (running and waiting), the strain on the computer against the limit above which new runs wait, and the latest results. A short container shows only these.',
+        'Below, every run, grouped waiting, running and finished, with its kind: verify for tests, build, task for other heavy work, push for a pre-push hook, review.',
+        'With more room, each run’s output, the session and epic it came from, the change it is for, and how long it waited and ran.',
+      ],
+    },
+    {
+      title: 'How to use it',
+      points: [
+        'Press a run to open it: its command, where it came from, its output, and Cancel.',
+        'Move a waiting run up, down or to the top, or cancel any run that is no longer needed.',
+        'Opening a run from Kehikot’s Inbox shows it here with its output open. Results are quiet news there and never ask for your attention.',
+        'From a shell or a git hook, kehikot-queue run followed by a command queues it, waits its turn and exits with its exit code. If Queue is not running, it runs the command right there.',
+        'Settings › Modules › Queue sets how many runs go at once, how busy the computer may be before new runs wait, and how long a run waits before it starts anyway.',
+      ],
+    },
+    {
+      title: 'What agents can do',
+      points: [
+        'queue_run puts a command in the queue and answers at once with its id; queue_wait waits for the result, and queue_status shows the queue or one run.',
+        'queue_cancel cancels the runs of the agent’s own conversation, never another’s.',
+        'When a run ends and nothing waits on it, the session that asked is told the result in one line.',
+        'The /queue skill asks an agent to run this work’s tests, a build or another heavy command through the queue and report.',
+      ],
+    },
+    {
+      title: 'Rules',
+      points: [
+        'A push run, a pre-push hook a person waits on, goes before every other kind; otherwise first come, first served.',
+        'A run’s pass or fail is its command’s own exit code. It runs in the folder it was asked in, with anything that looks like a secret left out of its environment.',
+        'It never runs anything it was not asked to run. Cancelling and moving runs from the page are yours alone.',
+      ],
+    },
+  ],
+}
+
 /*
  * Who this module is. `bun run rename <name>` rewrites the id, the name, the
  * folder and the port the first time; after that they never change, because the
@@ -56,6 +98,8 @@ export const DECLARED: Manifest = manifestSchema.parse({
      kehikko, and — for a session on a kehikko it is NOT on, while it is installed here — the second. */
   agentSays: "Run heavy commands — tests, builds, big installs — through the Queue (queue_run, then its wait line as a background shell command) instead of in the shell, so sessions don't collide.",
   absentSays: "Don't start heavy commands (test suites, builds, big installs) directly. If the person insists, suggest adding Queue to this kehikko so runs don't collide.",
+  /* "How to use" (protocol 2.52.0). */
+  help: HELP,
   intro,
   entry: '/app',
   /* What its content belongs to (protocol 2.29.0): one mode per scope, the default first. */
