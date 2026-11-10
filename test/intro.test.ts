@@ -41,4 +41,11 @@ describe('the introduction', () => {
       }
     }
   })
+
+  test('no filler: every slide says a concrete job in the module\u2019s own words', () => {
+    const banned = /\b(welcome|let'?s get started|get started|powerful|seamless(ly)?|easily|effortless(ly)?)\b/i
+    for (const slide of introFromFile(file)!.slides) {
+      expect(`${slide.title} ${slide.body}`, slide.title).not.toMatch(banned)
+    }
+  })
 })
