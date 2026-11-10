@@ -1,4 +1,4 @@
-import { resolveDoorPlace, sameTicket, type Before, type HostHasProjectOptions } from 'kehikot-module-protocol/serve'
+import { hostPlace, sameTicket, type Before, type HostHasProjectOptions } from 'kehikot-module-protocol/serve'
 
 import { argvOf, cwdOf, epicOf, expectOf, kindOf, labelOf, refsOf } from './asks.ts'
 import { runEnv } from './env.ts'
@@ -21,7 +21,7 @@ import { projectOf } from '../store.ts'
  *  - The body is JSON (the doors' rule) and bounded; the command is an argv, run as given.
  *
  *    POST /api/queue/run     { argv, cwd, env, keepEnv?, kind?, label?, refs?, epic?, place?, from?, expect?, preflight?, checks? }
- *                            → { ok, id, key, warn }, or { ok: false, refused: true, error } when the folder is not ready
+ *                            → { ok, id, key, warn, run, told }, or { ok: false, refused: true, error } when the folder is not ready
  *                            (its preflight failed, or a built-in check says it would fail): not queued, and not to be
  *                            run outside the queue either.
  *    GET  /api/queue/follow  ?id=&from=  → one JSON object per line: { run } as it changes, { out } as
@@ -167,7 +167,7 @@ export function cliDoor(options: CliDoorOptions): Before {
         return Response.json({ ok: false, refused: true, error: ['Not queued: it would fail before it did anything.', ...wouldFail(checked.refuse), 'Fix that and ask again, or pass --no-checks to queue it anyway.'].join('\n') }, { status: 422 })
       }
       const token = typeof body.place === 'string' ? body.place : null
-      const place = token ? await resolveDoorPlace(token, options.ask?.() ?? {}) : null
+      const place = token ? await hostPlace(token, options.ask?.() ?? {}) : null
       const from = typeof body.from === 'string' ? body.from.trim().slice(0, 80) : ''
       const asked: Asker = {
         via: 'cli',
@@ -191,7 +191,8 @@ export function cliDoor(options: CliDoorOptions): Before {
         origin,
         expect: expect.value,
       })
-      return Response.json({ ok: true, id: run.id, key: run.key, dropped: env.dropped, warn: wouldFail(checked.warn), run: q.view(run) })
+      /* `told`: a place to tell the asking session at when the run ends (`messages.notify`), for a CLI that does not wait (`--detach`). */
+      return Response.json({ ok: true, id: run.id, key: run.key, dropped: env.dropped, warn: wouldFail(checked.warn), run: q.view(run), told: asked.token !== null })
     }
 
     if (path.startsWith('/api/queue/lease')) return leaseDoor(request, url, options)
@@ -279,7 +280,7 @@ async function leaseDoor(request: Request, url: URL, options: CliDoorOptions): P
     if (!label.ok) return refuse(400, label.why)
     const minutes = typeof body.ttlMinutes === 'number' && Number.isFinite(body.ttlMinutes) && body.ttlMinutes > 0 ? body.ttlMinutes : TTL_DEFAULT_MS / 60_000
     const token = typeof body.place === 'string' ? body.place : null
-    const place = token ? await resolveDoorPlace(token, options.ask?.() ?? {}) : null
+    const place = token ? await hostPlace(token, options.ask?.() ?? {}) : null
     const from = typeof body.from === 'string' ? body.from.trim().slice(0, 80) : ''
     const sessionPid = typeof body.sessionPid === 'number' && Number.isInteger(body.sessionPid) && body.sessionPid > 1 ? body.sessionPid : null
     const taken = await leases.take({
