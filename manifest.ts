@@ -37,6 +37,7 @@ export const HELP = {
         'queue_cancel cancels the runs of the agent’s own conversation, never another’s.',
         'queue_lease runs a dev server in a leased slot on a free port; it stops when released, when its time runs out, or when its session ends.',
         'When a run ends and nothing waits on it, the session that asked is told the result in one line.',
+        'On a kehikko Queue is on, an agent’s heavy commands (and its subagents’) go through the queue on their own, and its dev servers into a leased slot; one test file runs at once. KEHIKOT_DIRECT=1 in front of a command runs it directly.',
         'The /queue skill asks an agent to run this work’s tests, a build or another heavy command through the queue and report.',
       ],
     },

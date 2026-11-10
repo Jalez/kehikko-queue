@@ -28,6 +28,7 @@ import { minutes, type Move } from './queue/schedule.ts'
 import { SETTINGS, capacityOf, cores, leasesOf, loadNow, readValues, writeValue } from './queue/settings.ts'
 import { leaseSaid, Leases, rangeOf, TTL_DEFAULT_MS } from './queue/leases.ts'
 import { KIND_WORDS, LIMITED } from './queue/kinds.ts'
+import { guardSettingsOf, guardsFor } from './queue/guards.ts'
 import { checkFolder, preflightRefusal, wouldFail } from './queue/preflight.ts'
 
 /**
@@ -37,7 +38,9 @@ import { checkFolder, preflightRefusal, wouldFail } from './queue/preflight.ts'
 
 export const TICKET = mintTicket()
 export const BUILD = establishBuild({ version: VERSION, dir: import.meta.dirname })
-export const MANIFEST: Manifest = manifestSchema.parse({ ...DECLARED, declares: { ...DECLARED.declares, skills: skillDeclarations() } })
+/* The guards (protocol 2.61.0) follow the person's settings; read here, and again when one changes. */
+const guardsNow = () => guardsFor(CLI, guardSettingsOf(readValues(queueDir())))
+export const MANIFEST: Manifest = manifestSchema.parse({ ...DECLARED, guards: guardsNow(), declares: { ...DECLARED.declares, skills: skillDeclarations() } })
 
 export function servingAt(origin: string): void {
   serveFrom(origin)
@@ -589,7 +592,11 @@ const settings = settingsDoor({
   module: ID,
   fields: SETTINGS,
   read: () => ({ values: readValues(DIR) }),
-  write: (_project, key, value) => writeValue(DIR, key, value),
+  write: (_project, key, value) => {
+    const refused = writeValue(DIR, key, value)
+    if (!refused && key.startsWith('guard')) MANIFEST.guards = guardsNow()
+    return refused
+  },
   ticket: TICKET,
 })
 
