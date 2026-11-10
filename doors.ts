@@ -22,9 +22,12 @@ import { loadMoved, makeStream, runsChanged, waitingMoved } from './live.ts'
 import { Strain } from './queue/strain.ts'
 import { logFile } from './queue/runner.ts'
 import { cliToken, logsDir, queueDir } from './queue/machine.ts'
+import { askedSaid } from './queue/who.ts'
 import { ended, Queue, RUN_KINDS, type Asker, type Run, type RunView } from './queue/queue.ts'
 import { minutes, type Move } from './queue/schedule.ts'
-import { SETTINGS, capacityOf, cores, loadNow, readValues, writeValue } from './queue/settings.ts'
+import { SETTINGS, capacityOf, cores, leasesOf, loadNow, readValues, writeValue } from './queue/settings.ts'
+import { leaseSaid, Leases, rangeOf, TTL_DEFAULT_MS } from './queue/leases.ts'
+import { KIND_WORDS, LIMITED } from './queue/kinds.ts'
 import { checkFolder, preflightRefusal, wouldFail } from './queue/preflight.ts'
 
 /**
@@ -86,6 +89,26 @@ export function queue(): Queue {
     ended: (run, watched) => void tellAsker(run, watched),
   })
   return held
+}
+
+/** The dev-server leases of this process. Tests make their own with `new Leases`. */
+let leasesHeld: Leases | null = null
+let leaseTimer: ReturnType<typeof setInterval> | null = null
+export function leases(): Leases {
+  if (!leasesHeld) {
+    leasesHeld = new Leases({ dir: DIR, most: () => leasesOf(readValues(DIR)), changed: runsChanged })
+    leaseTimer = setInterval(() => leasesHeld?.tick(), 5000)
+    leaseTimer.unref?.()
+  }
+  return leasesHeld
+}
+/** For tests: use these leases. */
+export function useLeases(one: Leases | null): void {
+  if (leaseTimer && one !== leasesHeld) {
+    clearInterval(leaseTimer)
+    leaseTimer = null
+  }
+  leasesHeld = one
 }
 
 /* ------------------------------------------------------------------ *
@@ -171,12 +194,18 @@ const took = (from: number | null, to: number | null) => (from === null || to ==
 /** One run, in a few lines an agent reads. */
 export function runSaid(run: RunView): string {
   const head = `${run.id} — ${JSON.stringify(run.label)} (${run.kind}) — ${run.state}${run.exit !== null ? `, exit ${run.exit}` : ''}${run.expect === 'fail' ? (run.state === 'failed' ? ', as expected' : run.state === 'passed' ? ', but it was expected to fail' : ', expected to fail') : ''}`
-  const lines = [head, `  from ${run.asker.said}${run.epic ? `, epic ${run.epic}` : ''}${run.refs.length ? `, for ${run.refs.join(', ')}` : ''}`]
+  const lines = [head, `  ${run.position !== null ? `#${run.position} in line, ` : ''}from ${askedSaid(run.asker)}${run.epic ? `, epic ${run.epic}` : ''}${run.refs.length ? `, for ${run.refs.join(', ')}` : ''}`]
   lines.push(`  in ${run.cwd}: ${run.argv.join(' ').slice(0, 200)}`)
   if (run.state === 'queued') lines.push(`  ${run.waiting ?? 'Waiting.'} Asked ${at(run.queuedAt)}.`)
   if (run.state === 'running') lines.push(`  Running since ${at(run.startedAt)} (waited ${took(run.queuedAt, run.startedAt)}${run.overdue ? ', started past the load guard after its longest wait' : ''}).`)
   if (ended(run.state)) lines.push(`  Ended ${at(run.finishedAt)}: waited ${took(run.queuedAt, run.startedAt ?? run.finishedAt)}, ran ${took(run.startedAt, run.finishedAt) || '0 s'}.${run.why ? ` ${run.why}` : ''}`)
   return lines.join('\n')
+}
+
+/** The per-kind limits in words: "1 typecheck, 1 e2e tests, 2 tests, 1 build, 2 task at once". */
+export function limitsSaid(perKind: Partial<Record<string, number>> | undefined): string {
+  const said = LIMITED.filter((kind) => (perKind?.[kind] ?? 0) > 0).map((kind) => `${perKind![kind]} ${KIND_WORDS[kind]}`)
+  return said.length ? `of each kind at most ${said.join(', ')}` : 'no limits by kind'
 }
 
 /** What `queue_seen`, which 0.6.0 had, answers now: nothing to do, and no error. */
@@ -213,7 +242,7 @@ export function tools() {
         + 'are woken when it exits with the run\'s exit code. Or call queue_wait with the id. Do not poll the machine\'s load. Its pass '
         + 'or fail is the command\'s own exit code. A fault in the folder is said at once instead of after the wait: an untrusted mise '
         + 'config refuses the run, a stale node_modules is said as "Would fail", and preflight is your own quick check run first. '
-        + 'kind: verify for tests (the default), build for a build, task for any other heavy command; push (a hook a person waits '
+        + 'kind: verify for tests (the default), typecheck for tsc, e2e for browser tests, build for a build, task for any other heavy command; push (a hook a person waits '
         + 'on) goes first, the rest are background. ref: the change or issue it is for ("!3907", "gh#12"), so a checklist of that '
         + 'work can show whether it passes.',
       inputSchema: {
@@ -224,7 +253,7 @@ export function tools() {
             anyOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }],
           },
           cwd: { type: 'string', description: 'The absolute folder to run it in (a worktree, say). Default: the project of this conversation\'s place.' },
-          kind: { type: 'string', enum: [...RUN_KINDS], description: 'What it is: verify (tests, the default), build, task (any other heavy command), push (a hook somebody waits on, goes first), review. other is the old name of task.' },
+          kind: { type: 'string', enum: [...RUN_KINDS], description: 'What it is: verify (tests, the default), typecheck (tsc), e2e (browser tests, Playwright), build, task (any other heavy command), push (a hook somebody waits on, goes first), review. other is the old name of task. Each limited kind has its own limit of how many run at once.' },
           label: { type: 'string', description: 'What a person calls this run: "pre-push monorepo", "bun test". Default: the command.' },
           ref: { description: 'The change or issue it is for, spelled as the tracker reading does: "!3907", "gh#12". One, or a list.', anyOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }] },
           preflight: {
@@ -246,8 +275,8 @@ export function tools() {
     {
       name: 'queue_status',
       description:
-        'What is in this computer\'s queue of heavy work (tests, builds, other commands): every run waiting (in the order they start, and what each waits for), running, '
-        + 'and recently finished, with the session and epic each came from. With id, one run.',
+        'What is in this computer\'s queue of heavy work (tests, builds, other commands): every run waiting (its place in line, and what each waits for), running, '
+        + 'and recently finished, with who asked (the agent session) and the epic each came from; and the leased dev servers. With id, one run or lease.',
       inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'One run\'s id, from queue_run.' } } },
       annotations: { readOnlyHint: true },
     },
@@ -271,9 +300,32 @@ export function tools() {
       annotations: { readOnlyHint: true },
     },
     {
+      name: 'queue_lease',
+      description:
+        'Run a dev server (bun run dev, vite) in one of this computer\'s few leased slots instead of starting it in your shell, so '
+        + 'sessions do not each leave one running. Queue picks a free port from port_range, gives it as $PORT and in place of {port} '
+        + 'in the command, starts it in a process group of its own, and answers the port at once. It stops the server when you '
+        + 'release it (queue_cancel with the lease id), when ttl_minutes runs out (default 30), or when the person stops it. '
+        + 'From a shell, `kehikot-queue lease dev -- COMMAND` does the same and also stops it when that command or its session ends.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          command: { description: 'The dev server\'s command: an array of words, or one line for the person\'s login shell ("bun run dev -- --port {port}").', anyOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }] },
+          cwd: { type: 'string', description: 'The absolute folder to run it in (a worktree, say). Default: the project of this conversation\'s place.' },
+          port_range: { type: 'string', description: 'Where to find a free port, "FROM-TO". Default 5280-5299.' },
+          ttl_minutes: { type: 'number', description: 'How long the lease lasts, in minutes. Default 30, at most 480.' },
+          label: { type: 'string', description: 'What a person calls it. Default: the command.' },
+          session: { type: 'string', description: 'Your agent session\'s id, shown with the lease.' },
+          ...PLACE_ARGS,
+        },
+        required: ['command'],
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    {
       name: 'queue_cancel',
       description:
-        'Cancel one of YOUR runs: waiting ones never start, a running one is stopped with its whole process group. Yours is one '
+        'Cancel one of YOUR runs, or release one of your dev-server leases: waiting ones never start, a running one (or a leased server) is stopped with its whole process group. Yours is one '
         + 'asked for by this conversation\'s place, or one whose key (from queue_run) you pass. The person cancels any run on the Queue page.',
       inputSchema: {
         type: 'object',
@@ -347,6 +399,11 @@ async function call(name: string, args: Record<string, unknown>, query: URLSearc
 
   if (name === 'queue_status') {
     if (id) {
+      const lease = leases().get(id)
+      if (lease) {
+        const tail = leases().tail(id, 40)
+        return `${leaseSaid(leases().view(lease))}\n${tail ? `The end of its output:\n${tail}` : 'It printed nothing yet.'}`
+      }
       const run = q.get(id)
       if (!run) throw new Error(`There is no run ${id}. queue_status without id lists them.`)
       return runSaid(q.view(run))
@@ -356,9 +413,11 @@ async function call(name: string, args: Record<string, unknown>, query: URLSearc
     const running = all.filter((run) => run.state === 'running')
     const finished = all.filter((run) => ended(run.state)).slice(0, 15)
     const cap = capacityOf(readValues(DIR), cores())
-    const head = `This computer: ${cores()} cores, 1-minute load ${loadNow().toFixed(1)}. At most ${cap.most} at once; nothing new starts above load ${cap.loadAbove.toFixed(1)} until a run has waited ${minutes(cap.waitMs)}.`
+    const head = `This computer: ${cores()} cores, 1-minute load ${loadNow().toFixed(1)}. At most ${cap.most} at once (${limitsSaid(cap.perKind)}); nothing new starts above load ${cap.loadAbove.toFixed(1)} until a run has waited ${minutes(cap.waitMs)}.`
     const part = (title: string, runs: RunView[]) => `${title} (${runs.length}):${runs.length ? `\n${runs.map(runSaid).join('\n')}` : ' none.'}`
-    return [head, part('Waiting', waiting), part('Running', running), part('Finished lately', finished)].join('\n\n')
+    const leased = leases().list().filter((one) => one.state === 'running')
+    const servers = `Dev servers (${leased.length} of ${leasesOf(readValues(DIR))}):${leased.length ? `\n${leased.map((one) => leaseSaid(one)).join('\n')}` : ' none.'}`
+    return [head, part('Waiting', waiting), part('Running', running), servers, part('Finished lately', finished)].join('\n\n')
   }
 
   if (name === 'queue_wait') {
@@ -376,6 +435,14 @@ async function call(name: string, args: Record<string, unknown>, query: URLSearc
       release()
     }
   }
+
+  if (name === 'queue_cancel' && id && leases().get(id)) {
+    const refused = leases().release(id, { key: typeof args.key === 'string' ? args.key : null, token })
+    if (refused) throw new Error(refused)
+    return `Released ${id}: its dev server is stopped.`
+  }
+
+  if (name === 'queue_lease') return leaseCall(args, query, token)
 
   if (name === 'queue_cancel') {
     if (!id) throw new Error('queue_cancel takes id.')
@@ -445,7 +512,49 @@ async function call(name: string, args: Record<string, unknown>, query: URLSearc
     ].filter(Boolean).join('\n')
   }
 
-  throw new Error(`There is no tool "${name.slice(0, 60)}" here. This door has queue_run, queue_status, queue_wait and queue_cancel.`)
+  throw new Error(`There is no tool "${name.slice(0, 60)}" here. This door has queue_run, queue_status, queue_wait, queue_cancel and queue_lease.`)
+}
+
+/** `queue_lease`: run a dev server in a leased slot, answer its port at once. */
+async function leaseCall(args: Record<string, unknown>, query: URLSearchParams, token: string | null): Promise<string> {
+  const place = await resolveDoorPlace(query, ASK.options)
+  const named = placeDefaults(args, place)
+  let project: string | null = null
+  if (named.project && place && named.project === place.project) project = place.project
+  else if (named.project) {
+    const found = await resolveDoorProject(named.project, ASK.options)
+    if (!found.ok) throw new Error(found.why)
+    project = found.path
+  }
+  const cwd = cwdOf(args.cwd ?? project ?? undefined)
+  if (!cwd.ok) throw new Error(args.cwd === undefined && !project ? `${DOOR_PLACE_SAYS.unplaced} Or pass cwd: the folder to run it in.` : cwd.why)
+  const argv = argvOf(args.command, process.env.SHELL || '/bin/sh')
+  if (!argv.ok) throw new Error(argv.why)
+  const label = labelOf(args.label, argv.value)
+  if (!label.ok) throw new Error(label.why)
+  const range = rangeOf(args.port_range)
+  if (!range) throw new Error('port_range is a port range from 1024 up: "5280-5299".')
+  const minutes = typeof args.ttl_minutes === 'number' && Number.isFinite(args.ttl_minutes) && args.ttl_minutes > 0 ? args.ttl_minutes : 30
+  const asker = mcpAsker(place, place ? token : null)
+  const session = typeof args.session === 'string' && /^[\w.:-]{1,128}$/.test(args.session) ? args.session : null
+  const taken = await leases().take({
+    argv: argv.value,
+    cwd: cwd.value,
+    env: agentEnv(),
+    label: label.value,
+    project: project ?? projectOf(cwd.value),
+    range,
+    ttlMs: Math.min(minutes * 60_000, TTL_DEFAULT_MS * 8),
+    asker: { ...asker, session },
+    sessionPid: null,
+  })
+  if (typeof taken === 'string') throw new Error(taken)
+  return [
+    `Leased ${taken.id} (key ${taken.key}): the dev server runs on port ${taken.port} — http://localhost:${taken.port} — given as $PORT and in place of {port} in the command.`,
+    `It is stopped at ${new Date(taken.until).toLocaleTimeString()} (${Math.round((taken.until - taken.startedAt) / 60_000)} min), or when you release it: queue_cancel with id ${taken.id}${place ? '' : ' and the key'}. Release it when you are done with it.`,
+    'Its output: queue_status with this id.',
+    DOOR_PLACE_SAYS.used(named.from, place),
+  ].filter(Boolean).join('\n')
 }
 
 interface Rpc {
@@ -485,12 +594,13 @@ const settings = settingsDoor({
 })
 
 /** What the page reads: every run, and the machine as the queue sees it. */
-export function overview(q: Queue) {
+export function overview(q: Queue, leased: Leases = leases()) {
   const capacity = capacityOf(readValues(DIR), cores())
   return {
     ok: true,
     runs: q.list(),
-    machine: { cores: cores(), load: loadNow(), most: capacity.most, loadAbove: capacity.loadAbove, waitMinutes: capacity.waitMs / 60_000, samples: STRAIN.list() },
+    leases: leased.list(),
+    machine: { cores: cores(), load: loadNow(), most: capacity.most, loadAbove: capacity.loadAbove, waitMinutes: capacity.waitMs / 60_000, samples: STRAIN.list(), perKind: capacity.perKind, leasesMost: leasesOf(readValues(DIR)) },
   }
 }
 
@@ -542,11 +652,15 @@ export async function answer(
       const no = q.cancel(id, { person: true })
       return no ? bad(no) : ok(overview(q))
     }
+    if (body?.op === 'release') {
+      const no = leases().release(id, { person: true })
+      return no ? bad(no) : ok(overview(q))
+    }
     if (body?.op === 'move' && (body.to === 'up' || body.to === 'down' || body.to === 'top')) {
       const no = q.move(id, body.to as Move)
       return no ? bad(no) : ok(overview(q))
     }
-    return bad('An act is cancel (id) or move (id, to: up, down or top).')
+    return bad('An act is cancel (id), release (id of a dev-server lease) or move (id, to: up, down or top).')
   }
 
   if (path.startsWith('/api/')) return bad('Not here.', 404)

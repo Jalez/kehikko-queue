@@ -22,6 +22,8 @@ what follows is how THIS repository is built, and the rules a change here keeps.
 | `bin/kehikot-queue(.ts)`, `hooks/pre-push` | The CLI for shells and hooks; the hook snippet. |
 | `src/app.tsx`, `src/inbox.ts`, `src/header.ts` | The page, the Inbox items, the header switch. |
 | `src/glance.ts`, `src/components/glance.tsx`, `src/use-box.ts` | What the page says at a glance and how much more it shows at each container size (`levelOf`, pure); the three tiles and their charts (shadcn's chart, `src/components/ui/chart.tsx`); the container's measured size. |
+| `queue/leases.ts` | Dev-server leases: a free port, the server in its own group, stopped by pid on release, TTL, holder or session gone. |
+| `queue/kinds.ts`, `queue/who.ts` | The kinds, their other words and their per-kind limits (`LIMITED`, `LIMIT_DEFAULTS`); who asked, in a few words. Pure. |
 | `queue/preflight.ts` | Is the folder ready, when a run is asked for: the asker's `preflight`, the mise trust and `node_modules` checks, and the signature of a fast failure. |
 | `queue/strain.ts`, `queue/expect.ts` | The load sampled at the queue's own look at it, for the strain chart (memory only); what the asker said a run should come to. |
 | `serve.ts`, `build.ts` | The built page on Bun (ready-built); Vite in a checkout. Both take `isOurs` from `doors.ts`: add a path there, never in one of them (`test/serves.test.ts`). |

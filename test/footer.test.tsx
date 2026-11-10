@@ -27,6 +27,14 @@ describe('the footer', () => {
     expect(items.every((i) => i.kind === 'text' || i.kind === 'meter')).toBe(true)
   })
 
+  test('the queue\'s tooltip says each waiting run\'s place in line and who asked; leased dev servers are an item', () => {
+    const runs = [aRun({ id: 'w1', label: 'tsc', state: 'queued', startedAt: null, finishedAt: null, exit: null, position: 1, asker: { via: 'cli', said: 'a shell, in /p', token: null, conversation: null, agent: 'Claude Code', session: 'abcdef123456' } })]
+    const lease = { id: 'l1', label: 'app: bun run dev', argv: ['bun', 'run', 'dev'], cwd: '/p', project: null, port: 5281, asker: { via: 'cli' as const, said: 'a shell, in /p', token: null, conversation: null, session: 'abcdef123456' }, sessionPid: null, startedAt: 0, until: 1, pid: 1, state: 'running' as const, endedAt: null, why: null, exit: null }
+    const items = footerItems({ runs, machine: { ...machine, leasesMost: 3 }, trouble: null, leases: [lease] })
+    expect(items.find((i) => i.id === 'queue')!.tooltip).toContain('#1 tsc — Claude Code (session abcdef12)')
+    expect(items.find((i) => i.id === 'leases')).toMatchObject({ kind: 'text', text: '1 of 3 dev server', tooltip: 'app: bun run dev on port 5281, leased by session abcdef12' })
+  })
+
   test('a load above the limit is critical and says held; no results yet, no results item', () => {
     const items = footerItems({ runs: [], machine: { ...machine, load: 10 }, trouble: null })
     expect(items.find((i) => i.id === 'load')).toMatchObject({ value: 1, level: 'critical', text: '10.0 / 9.0 held' })
@@ -62,6 +70,7 @@ describe('the page and the footer', () => {
     output: async () => ({ text: '', next: 0, size: 0 }),
     cancel: async () => overview,
     move: async () => overview,
+    release: async () => overview,
   }
   const settle = () => act(async () => new Promise((done) => setTimeout(done, 20)))
 

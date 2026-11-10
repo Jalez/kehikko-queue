@@ -5,6 +5,7 @@ import { runEnv } from './env.ts'
 import { originFromCwd, originFromPlace } from './origin-find.ts'
 import { checkFolder, preflightRefusal, wouldFail } from './preflight.ts'
 import { ended, type Asker, type Queue } from './queue.ts'
+import { rangeOf, TTL_DEFAULT_MS, type Leases } from './leases.ts'
 import { projectOf } from '../store.ts'
 
 /**
@@ -26,6 +27,10 @@ import { projectOf } from '../store.ts'
  *    GET  /api/queue/follow  ?id=&from=  → one JSON object per line: { run } as it changes, { out } as
  *                            output arrives (from byte `from`), and last { end: run } when it ended.
  *    POST /api/queue/cancel  { id, key }
+ *    POST /api/queue/lease   { argv, cwd, env, keepEnv?, label?, range?, ttlMinutes?, session?, agent?, holder?, sessionPid?, place?, from? }
+ *                            → { ok, id, key, port }, or { ok: false, error } when no slot or port is free
+ *    GET  /api/queue/lease/follow ?id=&from= → { lease } as it changes, { out }, and last { end: lease }
+ *    POST /api/queue/lease/release { id, key }
  */
 
 export const TOKEN_HEADER = 'x-kehikot-queue-token'
@@ -36,6 +41,8 @@ const refuse = (status: number, error: string) => Response.json({ ok: false, err
 export interface CliDoorOptions {
   queue(): Queue
   token(): string
+  /** The dev-server leases; absent: this door leases none. */
+  leases?(): Leases
   /** How the place of a token is asked of the host. Read per request, so a test can change it. */
   ask?: () => HostHasProjectOptions
   /** How often a follow looks again, in ms. */
@@ -167,6 +174,7 @@ export function cliDoor(options: CliDoorOptions): Before {
         said: `${from || 'a shell'}${place ? ` in ${place.projectName ?? place.project}${place.epic ? ` › ${place.epic}` : ''}` : ''}, in ${cwd.value}`,
         token: place ? token : null,
         conversation: place?.conversation ?? null,
+        ...whoOf(body),
       }
       const epic = epicOf(body.epic) ?? place?.epic ?? null
       const origin = place ? originFromPlace(place, cwd.value) : await originFromCwd(cwd.value, epic, options.ask?.() ?? {})
@@ -185,6 +193,8 @@ export function cliDoor(options: CliDoorOptions): Before {
       })
       return Response.json({ ok: true, id: run.id, key: run.key, dropped: env.dropped, warn: wouldFail(checked.warn), run: q.view(run) })
     }
+
+    if (path.startsWith('/api/queue/lease')) return leaseDoor(request, url, options)
 
     if (path === '/api/queue/cancel' && request.method === 'POST') {
       const body = await jsonOf(request)
@@ -246,6 +256,106 @@ export function cliDoor(options: CliDoorOptions): Before {
 
     return refuse(404, 'Not here.')
   }
+}
+
+/** The lease paths of the CLI's door: behind the same fence (a program, with the token) as the runs. */
+async function leaseDoor(request: Request, url: URL, options: CliDoorOptions): Promise<Response> {
+  const leases = options.leases?.()
+  if (!leases) return refuse(404, 'This Queue leases no dev servers.')
+  const path = url.pathname
+  if (path === '/api/queue/lease' && request.method === 'POST') {
+    const body = await jsonOf(request)
+    if (!body) return refuse(400, 'The body is a JSON object, at most 1 MB, sent as application/json.')
+    const argv = argvOf(body.argv, '/bin/sh')
+    if (!argv.ok || !Array.isArray(body.argv)) return refuse(400, argv.ok ? 'argv is the command as an array of words.' : argv.why)
+    const cwd = cwdOf(body.cwd)
+    if (!cwd.ok) return refuse(400, cwd.why)
+    const keep = Array.isArray(body.keepEnv) ? body.keepEnv.filter((one): one is string => typeof one === 'string').slice(0, 64) : []
+    const env = runEnv(body.env, keep)
+    if ('why' in env) return refuse(400, env.why)
+    const range = rangeOf(body.range)
+    if (!range) return refuse(400, 'range is a port range from 1024 up, "5280-5299".')
+    const label = labelOf(body.label, argv.value)
+    if (!label.ok) return refuse(400, label.why)
+    const minutes = typeof body.ttlMinutes === 'number' && Number.isFinite(body.ttlMinutes) && body.ttlMinutes > 0 ? body.ttlMinutes : TTL_DEFAULT_MS / 60_000
+    const token = typeof body.place === 'string' ? body.place : null
+    const place = token ? await resolveDoorPlace(token, options.ask?.() ?? {}) : null
+    const from = typeof body.from === 'string' ? body.from.trim().slice(0, 80) : ''
+    const sessionPid = typeof body.sessionPid === 'number' && Number.isInteger(body.sessionPid) && body.sessionPid > 1 ? body.sessionPid : null
+    const taken = await leases.take({
+      argv: argv.value,
+      cwd: cwd.value,
+      env: env.env,
+      label: label.value,
+      project: place?.project ?? projectOf(cwd.value),
+      range,
+      ttlMs: minutes * 60_000,
+      asker: { via: 'cli', said: `${from || 'a shell'}, in ${cwd.value}`, token: place ? token : null, conversation: place?.conversation ?? null, ...whoOf(body) },
+      sessionPid,
+    })
+    if (typeof taken === 'string') return refuse(409, taken)
+    return Response.json({ ok: true, id: taken.id, key: taken.key, port: taken.port, until: taken.until, dropped: env.dropped })
+  }
+  if (path === '/api/queue/lease/release' && request.method === 'POST') {
+    const body = await jsonOf(request)
+    const refused = leases.release(String(body?.id ?? ''), { key: typeof body?.key === 'string' ? body.key : null })
+    return refused ? refuse(400, refused) : Response.json({ ok: true })
+  }
+  if (path === '/api/queue/lease/follow' && request.method === 'GET') {
+    const id = url.searchParams.get('id') ?? ''
+    if (!leases.get(id)) return refuse(404, 'There is no such lease.')
+    let from = Math.max(0, Number(url.searchParams.get('from') ?? 0) || 0)
+    const every = options.everyMs ?? 500
+    const encoder = new TextEncoder()
+    let stop = false
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        const line = (value: unknown) => controller.enqueue(encoder.encode(`${JSON.stringify(value)}\n`))
+        let said = ''
+        try {
+          while (!stop) {
+            const lease = leases.get(id)
+            if (!lease) break
+            const view = leases.view(lease)
+            if (view.state !== said) {
+              said = view.state
+              line({ lease: view })
+            }
+            for (;;) {
+              const read = leases.output(id, from)
+              if (!read.text) break
+              from = read.next
+              line({ out: read.text, next: from })
+            }
+            if (lease.state === 'ended') {
+              line({ end: view })
+              break
+            }
+            await new Promise((done) => setTimeout(done, every))
+          }
+        } finally {
+          try {
+            controller.close()
+          } catch {
+            /* The reader went away. */
+          }
+        }
+      },
+      cancel() {
+        stop = true
+      },
+    })
+    return new Response(stream, { headers: { 'content-type': 'application/x-ndjson', 'cache-control': 'no-store' } })
+  }
+  return refuse(404, 'Not here.')
+}
+
+/** The asking session, agent and waiting process a CLI says: checked words and a pid, or nothing. */
+export function whoOf(body: Record<string, unknown>): Pick<Asker, 'session' | 'agent' | 'holder'> {
+  const session = typeof body.session === 'string' && /^[\w.:-]{1,128}$/.test(body.session) ? body.session : null
+  const agent = typeof body.agent === 'string' ? body.agent.replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 60) || null : null
+  const holder = typeof body.holder === 'number' && Number.isInteger(body.holder) && body.holder > 1 ? body.holder : null
+  return { session, agent, holder }
 }
 
 async function jsonOf(request: Request): Promise<Record<string, unknown> | null> {

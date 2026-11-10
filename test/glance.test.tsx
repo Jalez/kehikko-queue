@@ -70,6 +70,7 @@ function fakeApi(runs: Overview['runs'], at: Machine = machine) {
     output: async (id) => ({ text: `output of ${id}`, next: 10, size: 10 }),
     cancel: async (id) => (said.push(`cancel ${id}`), { runs, machine: at }),
     move: async (id, to) => (said.push(`move ${id} ${to}`), { runs, machine: at }),
+    release: async (id) => (said.push(`release ${id}`), { runs, machine: at }),
   }
   return { api, said }
 }
