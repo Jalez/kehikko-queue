@@ -5,10 +5,11 @@ import { join } from 'node:path'
 
 import { beforeInfo, registryDir } from 'kehikot-module-protocol/serve'
 
-import { autoLabel, exitFor, machineDir, parse, queueDir, where } from '../bin/kehikot-queue.ts'
+import { autoLabel, detachedLine, exitFor, machineDir, parse, queueDir, where } from '../bin/kehikot-queue.ts'
+import { tellAsker } from '../doors.ts'
 import { cliDoor } from '../queue/cli-door.ts'
 import { cliToken, queueDir as serverQueueDir } from '../queue/machine.ts'
-import { Queue } from '../queue/queue.ts'
+import { Queue, type Run } from '../queue/queue.ts'
 
 /*
  * The CLI as a hook runs it: a separate process, its exit code what the hook returns. Never against
@@ -87,6 +88,122 @@ describe('through the queue', () => {
       [autoLabel(['sh', '-c', 'exit 0'], tmpdir()), 'passed', true],
       ['pre-push', 'failed', true],
     ])
+  })
+})
+
+describe('--detach: queued, and the command returns at once (a shell tool that cannot wait)', () => {
+  const PLACE = 'P'.repeat(32)
+  /** A host that knows the place token, and takes notices: what the queue asks it, kept. */
+  const host = (async (url: string | URL | Request) => {
+    const href = String(url)
+    if (href.includes('/host/place')) return Response.json({ ok: true, place: { token: PLACE, conversation: 'abcdef123456', projectId: 'project-scratch-1', project: tmpdir(), projectName: 'Scratch', epic: 'queue', parts: [], kehikko: null } })
+    if (href.includes('/host/is-project')) return Response.json({ ok: true, project: false })
+    return new Response('no', { status: 404 })
+  }) as typeof fetch
+
+  function serve(most: number) {
+    const queueDir = scratch()
+    const token = cliToken(queueDir)
+    const notices: Array<{ method: string; params: Record<string, unknown> }> = []
+    const ended: Run[] = []
+    const fake = (async (method: string, params: Record<string, unknown>) => {
+      notices.push({ method, params })
+      return { ok: true, data: { outcome: 'sent', id: 1, why: '' } }
+    }) as never
+    let capacity = most
+    const q = new Queue({
+      dir: join(queueDir, 'state'),
+      capacity: () => ({ most: capacity, loadAbove: 100, waitMs: 600_000 }),
+      load: () => 0,
+      ended: (run, watched) => {
+        ended.push(run)
+        void tellAsker(run, watched, fake)
+      },
+    })
+    const timer = setInterval(() => q.tick(), 50)
+    const door = cliDoor({ queue: () => q, token: () => token, everyMs: 50, ask: () => ({ fetch: host, keepMs: 0 }) })
+    const server = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      async fetch(request) {
+        if (new URL(request.url).pathname === '/healthz') return Response.json({ ok: true, id: 'kehikot.queue' })
+        return (await door(request, beforeInfo(request))) ?? new Response('no', { status: 404 })
+      },
+    })
+    cleanup.push(() => {
+      clearInterval(timer)
+      q.stop()
+      server.stop(true)
+    })
+    const env = { KEHIKOT_QUEUE_URL: `http://127.0.0.1:${server.port}`, KEHIKOT_QUEUE_DIR: queueDir, KEHIKOT_MODULES_DIR: scratch() }
+    return { q, env, notices, ended, open: (n: number) => (capacity = n) }
+  }
+  const until = async (ok: () => boolean, ms = 10_000) => {
+    const end = Date.now() + ms
+    while (!ok()) {
+      if (Date.now() > end) throw new Error('timed out')
+      await Bun.sleep(25)
+    }
+  }
+
+  test('returns at once with the id while the run waits, which then runs on its own, and the asking session is told', async () => {
+    const { q, env, notices, ended, open } = serve(0)
+    const started = Date.now()
+    const got = await cli(['run', '--detach', '--label', 'suite', '--', 'sh', '-c', 'echo "ran:$KEHIKOT_PLACE:$KEHIKOT_DETACH"; exit 0'], { ...env, KEHIKOT_PLACE: PLACE, KEHIKOT_DETACH: '1' })
+    expect(got.code).toBe(0)
+    expect(Date.now() - started).toBeLessThan(5000)
+    const [run] = q.list()
+    expect(run!.state).toBe('queued')
+    expect(got.out).toBe(`Queued as ${run!.id} (#1 in line). You'll be told in this session when it finishes; read its output with queue_wait or queue_status id ${run!.id} (or ${got.out.split('(or ')[1]!.split(' wait ')[0]} wait ${run!.id}).\n`)
+    /* Nothing holds it: the CLI is gone, and the run is still in line, not cancelled. */
+    expect(run!.asker.holder ?? null).toBeNull()
+    q.tick()
+    expect(q.get(run!.id)!.state).toBe('queued')
+    /* It is the queue's now: room comes, it runs, it ends, and the session is told. */
+    open(1)
+    await until(() => notices.length > 0)
+    expect(ended.map((one) => one.state)).toEqual(['passed'])
+    /* The variables that steered the CLI are not the run's. */
+    expect(q.output(run!.id, 0).text).toContain('ran::')
+    expect(notices[0]).toMatchObject({ method: 'messages.notify', params: { token: PLACE, kind: 'report' } })
+    expect(String(notices[0]!.params.body)).toContain('"suite" passed (exit 0)')
+  })
+
+  test('KEHIKOT_DETACH=1 in front of a guard\'s rewrite does the same: heavy work is queued and the command returns', async () => {
+    const { q, env } = serve(0)
+    const project = scratch()
+    writeFileSync(join(project, 'package.json'), JSON.stringify({ scripts: { test: 'bun test' } }))
+    const child = Bun.spawn([CLI, 'run', '--guard', '--', 'sh', '-c', 'bun test'], { env: { PATH: process.env.PATH!, HOME: scratch(), ...env, KEHIKOT_DETACH: '1', KEHIKOT_PLACE: PLACE }, stdout: 'pipe', stderr: 'pipe', cwd: project })
+    const [out, code] = await Promise.all([new Response(child.stdout).text(), child.exited])
+    expect(code).toBe(0)
+    expect(out).toStartWith('Queued as ')
+    expect(q.list()).toHaveLength(1)
+    expect(q.list()[0]!.kind).toBe('verify')
+  })
+
+  test('light work under a guard still runs at once, as if no guard were there', async () => {
+    const { q, env } = serve(0)
+    const got = await cli(['run', '--guard', '--detach', '--', 'sh', '-c', 'echo light'], env)
+    expect(got.code).toBe(0)
+    expect(got.out).toBe('light\n')
+    expect(q.list()).toHaveLength(0)
+  })
+
+  test('with no place to tell, it says so and how to read the result', async () => {
+    const { env } = serve(0)
+    const got = await cli(['run', '--detach', '--', 'sh', '-c', 'exit 0'], env)
+    expect(got.code).toBe(0)
+    expect(got.out).toContain('Nothing will tell this session when it finishes')
+    expect(got.out).toContain('queue_wait or queue_status id ')
+  })
+
+  test('the line, and the flag and variable that ask for it', () => {
+    expect(detachedLine('r1', { state: 'queued', position: 3 }, true)).toStartWith("Queued as r1 (#3 in line). You'll be told in this session when it finishes; read its output with queue_wait or queue_status id r1")
+    expect(detachedLine('r1', { state: 'running', position: null }, true)).toStartWith('Queued as r1 (running now).')
+    expect(parse(['--detach', '--', 'x'], {})).toMatchObject({ detach: true })
+    expect(parse(['--', 'x'], { KEHIKOT_DETACH: '1' })).toMatchObject({ detach: true })
+    expect(parse(['--', 'x'], { KEHIKOT_DETACH: '0' })).toMatchObject({ detach: false })
+    expect(parse(['--', 'x'], {})).toMatchObject({ detach: false })
   })
 })
 

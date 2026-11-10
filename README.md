@@ -86,6 +86,18 @@ once and says nothing; the rest is queued as its kind. `KEHIKOT_DIRECT=1` in fro
 directly. Settings › Modules adds commands and scripts to queue, commands always run directly, or turns
 the guards off.
 
+**Queued without waiting: `--detach`.** A rewritten command waits in line, which can be many minutes,
+and a shell tool that waits for its command to exit is blocked meanwhile (or times out and cancels the
+run). `run --detach`, or `KEHIKOT_DETACH=1` in its environment, queues the run and returns at once: it
+prints one line on stdout (`Queued as <id> (#3 in line). You'll be told in this session when it
+finishes; read its output with queue_wait or queue_status id <id> …`) and exits 0. The run goes on
+under Queue alone; nothing cancels it when the command ends. When it ends, Queue tells the asking
+session in one line (`messages.notify`), by the place token in `--place` or `KEHIKOT_PLACE`. The guard's
+template stays the waiting one, because an agent CLI that can run a command in the background (Claude
+Code) is told when it exits and sees its output; an agent module whose shell tool cannot do that puts
+`KEHIKOT_DETACH=1 KEHIKOT_PLACE=<the session's token>` in front of the rewritten command. Light work
+under `--guard` still runs at once. Neither variable reaches the run's environment.
+
 **Limits by kind.** Besides "Runs at once" and the load guard, each kind has its own limit,
 machine-wide, in Kehikot's Settings › Modules: e2e (Playwright) 1, typecheck 1, test suites 2, builds
 1, other tasks 2. A run whose kind is full waits, and the next in line whose kind has room starts.

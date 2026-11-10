@@ -5,7 +5,7 @@
  *
  *   kehikot-queue run [--kind verify|typecheck|e2e|build|task|push|review] [--label TEXT] [--ref REF]… [--epic SLUG]
  *                     [--place TOKEN] [--keep-env NAME]… [--from TEXT] [--expect fail]
- *                     [--session ID] [--agent NAME]
+ *                     [--session ID] [--agent NAME] [--detach]
  *                     [--preflight 'SHELL LINE'] [--no-checks] -- COMMAND [ARG…]
  *   kehikot-queue lease dev [--port-range FROM-TO] [--ttl MINUTES] [--label TEXT] [--session ID] [--agent NAME] -- COMMAND [ARG…]
  *   kehikot-queue wait ID
@@ -27,6 +27,14 @@
  * (bin/guard-plan.ts, from its package.json): heavy is queued as its kind; light (one test file, a
  * script that is not heavy, --version) runs at once, saying nothing, as if no guard were there. So
  * does a line with KEHIKOT_DIRECT=1.
+ *
+ * --detach (or KEHIKOT_DETACH=1 in its environment): queue the run and return at once, for a shell
+ * tool that cannot wait in the background. It prints one line on stdout — the run's id, where it is
+ * in line, and how to read its output — and exits 0. The run then goes on under Queue alone (no child
+ * of this shell, and nothing cancels it when this command ends), and when it ends Queue tells the
+ * asking session in one line (`messages.notify`), by the place token in --place or KEHIKOT_PLACE. An
+ * agent module whose shell tool blocks until a command exits puts `KEHIKOT_DETACH=1 KEHIKOT_PLACE=…`
+ * in front of a guard's rewrite. Light work under --guard still runs at once, as above.
  *
  * `lease dev` runs a dev server in one of a few leased slots (Settings › Modules, "Dev servers at
  * once"), on a free port of --port-range (default 5280-5299), given as $PORT and in place of {port}
@@ -126,6 +134,8 @@ export interface Parsed {
   agent: string | null
   /** Rewritten to this by a guard: decide here whether the command is heavy in this project (`guard-plan.ts`). */
   guard: boolean
+  /** Queue it and return at once; the asking session is told when it ends. */
+  detach: boolean
   argv: string[]
 }
 
@@ -134,6 +144,12 @@ export function sessionOf(env: Env): string | null {
   const said = env.KEHIKOT_SESSION_ID || env.CLAUDE_CODE_SESSION_ID || env.CODEX_SESSION_ID || ''
   return /^[\w.:-]{1,128}$/.test(said) ? said : null
 }
+
+/** Whether a variable says yes: set, not empty, not `0` (as KEHIKOT_DIRECT is read). */
+const yes = (value: string | undefined): boolean => value !== undefined && value !== '' && value !== '0'
+
+/** The variables that steer the CLI itself, kept out of the run's environment. */
+export const OWN_ENV = ['KEHIKOT_DETACH', 'KEHIKOT_PLACE'] as const
 
 /** Which agent asks, in a few words: as passed, else what its environment says. */
 export function agentOf(env: Env): string | null {
@@ -159,7 +175,7 @@ export function autoLabel(argv: readonly string[], cwd: string): string {
 const KIND_ALIASES: Record<string, string> = { unit: 'verify', test: 'verify', tests: 'verify', playwright: 'e2e', tsc: 'typecheck' }
 
 export function parse(args: string[], env: Env = process.env): Parsed | string {
-  const out: Parsed = { kind: 'verify', label: null, refs: [], epic: null, place: env.KEHIKOT_PLACE || null, keep: [], from: null, expect: null, preflight: null, checks: true, session: sessionOf(env), agent: agentOf(env), guard: false, argv: [] }
+  const out: Parsed = { kind: 'verify', label: null, refs: [], epic: null, place: env.KEHIKOT_PLACE || null, keep: [], from: null, expect: null, preflight: null, checks: true, session: sessionOf(env), agent: agentOf(env), guard: false, detach: yes(env.KEHIKOT_DETACH), argv: [] }
   for (let at = 0; at < args.length; at++) {
     const arg = args[at]!
     if (arg === '--') {
@@ -178,6 +194,7 @@ export function parse(args: string[], env: Env = process.env): Parsed | string {
     else if (arg === '--session') out.session = value()?.slice(0, 128) || null
     else if (arg === '--agent') out.agent = value()?.slice(0, 60) || null
     else if (arg === '--guard') out.guard = true
+    else if (arg === '--detach') out.detach = true
     else if (arg === '--preflight') {
       const line = value()?.trim()
       if (!line) return '--preflight takes one shell line, quoted: --preflight \'bun install --frozen-lockfile --dry-run\'.'
@@ -276,7 +293,9 @@ export async function queued(parsed: Parsed, env: Env = process.env, cwd = proce
   }
   for (const signal of STOPS) process.once(signal, early)
 
-  let answer: { ok?: boolean; id?: string; key?: string; error?: string; dropped?: string[]; warn?: string[]; refused?: boolean }
+  let answer: { ok?: boolean; id?: string; key?: string; error?: string; dropped?: string[]; warn?: string[]; refused?: boolean; told?: boolean; run?: { state?: string; position?: number | null } }
+  /* What the CLI itself was steered by is not the run's. */
+  const runEnv: Env = Object.fromEntries(Object.entries(env).filter(([name]) => !(OWN_ENV as readonly string[]).includes(name)))
   try {
     const response = await fetch(`${url}/api/queue/run`, {
       method: 'POST',
@@ -285,13 +304,14 @@ export async function queued(parsed: Parsed, env: Env = process.env, cwd = proce
         argv: parsed.argv,
         cwd,
         /* A terminal sees the run's colours, as it would have run here. */
-        env: process.stdout.isTTY && !env.NO_COLOR && !env.FORCE_COLOR ? { ...env, FORCE_COLOR: '1' } : env,
+        env: process.stdout.isTTY && !env.NO_COLOR && !env.FORCE_COLOR ? { ...runEnv, FORCE_COLOR: '1' } : runEnv,
         keepEnv: parsed.keep,
         kind: parsed.kind,
         label: parsed.label ?? autoLabel(parsed.argv, cwd),
         session: parsed.session,
         agent: parsed.agent,
-        holder: process.pid,
+        /* A detached run has nobody waiting on it: this command's end must not cancel it. */
+        ...(parsed.detach ? {} : { holder: process.pid }),
         refs: parsed.refs,
         epic: parsed.epic,
         place: parsed.place,
@@ -316,6 +336,12 @@ export async function queued(parsed: Parsed, env: Env = process.env, cwd = proce
   if (answer.dropped?.length) SAY(`left out of its environment as secret-looking: ${answer.dropped.join(', ')} (pass --keep-env NAME to keep one).`)
   for (const line of answer.warn ?? []) SAY(line)
 
+  if (parsed.detach) {
+    for (const signal of STOPS) process.off(signal, early)
+    process.stdout.write(`${detachedLine(id, answer.run ?? null, answer.told === true)}\n`)
+    return 0
+  }
+
   let gone = false
   const cancel = async () => {
     if (gone) return
@@ -331,6 +357,21 @@ export async function queued(parsed: Parsed, env: Env = process.env, cwd = proce
   if (stopAsked) await cancel()
 
   return follow(url, token, id, { expect: parsed.expect, instead: (why) => direct(parsed.argv, why) })
+}
+
+/** The CLI as a shell runs it (the wrapper beside this file), quoted: its path has spaces on macOS. */
+const SELF = ((path: string) => (/^[\w@%+=:,./-]+$/.test(path) ? path : `'${path.replaceAll("'", "'\\''")}'`))(join(import.meta.dirname, 'kehikot-queue'))
+
+/**
+ * The one line `--detach` prints: the run's id, where it is, who will be told, and how to read its
+ * output. `told`: the queue holds a place to tell the asking session at.
+ */
+export function detachedLine(id: string, run: { state?: string; position?: number | null } | null, told: boolean): string {
+  const where = run?.state === 'running' ? 'running now' : typeof run?.position === 'number' ? `#${run.position} in line` : 'waiting its turn'
+  const read = `read its output with queue_wait or queue_status id ${id} (or ${SELF} wait ${id})`
+  return told
+    ? `Queued as ${id} (${where}). You'll be told in this session when it finishes; ${read}.`
+    : `Queued as ${id} (${where}). Nothing will tell this session when it finishes (no place to tell was given); ${read}.`
 }
 
 /**
@@ -639,7 +680,7 @@ if (import.meta.main) {
   } else if (verb === 'status') {
     process.exit(await status())
   } else {
-    process.stderr.write('usage: kehikot-queue run [--kind verify|typecheck|e2e|build|task|push|review] [--label TEXT] [--ref REF] [--epic SLUG] [--place TOKEN] [--keep-env NAME] [--from TEXT] [--expect fail] [--session ID] [--agent NAME] [--preflight \'LINE\'] [--no-checks] -- COMMAND [ARG…]\n       kehikot-queue lease dev [--port-range FROM-TO] [--ttl MINUTES] [--label TEXT] [--session ID] [--agent NAME] -- COMMAND [ARG…]\n       kehikot-queue wait ID\n       kehikot-queue status\n')
+    process.stderr.write('usage: kehikot-queue run [--kind verify|typecheck|e2e|build|task|push|review] [--label TEXT] [--ref REF] [--epic SLUG] [--place TOKEN] [--keep-env NAME] [--from TEXT] [--expect fail] [--session ID] [--agent NAME] [--detach] [--preflight \'LINE\'] [--no-checks] -- COMMAND [ARG…]\n       kehikot-queue lease dev [--port-range FROM-TO] [--ttl MINUTES] [--label TEXT] [--session ID] [--agent NAME] -- COMMAND [ARG…]\n       kehikot-queue wait ID\n       kehikot-queue status\n')
     process.exit(2)
   }
 }
