@@ -14,7 +14,8 @@ export const HELP = {
       title: 'What it shows',
       points: [
         'At the top, three tiles: the queue (running and waiting), the strain on the computer against the limit above which new runs wait, and the latest results. A short container shows only these.',
-        'Below, every run, grouped waiting, running and finished, with its kind: verify for tests, build, task for other heavy work, push for a pre-push hook, review.',
+        'Below, every run, grouped waiting, running and finished, with its kind: verify for tests, typecheck, e2e, build, task for other heavy work, push for a pre-push hook, review. A waiting run says who asked and its place in line.',
+        'Dev servers that agents have leased, each with its port, who leased it and until when.',
         'With more room, each run’s output, the session and epic it came from, the change it is for, and how long it waited and ran.',
       ],
     },
@@ -25,7 +26,8 @@ export const HELP = {
         'Move a waiting run up, down or to the top, or cancel any run that is no longer needed.',
         'Opening a run from Kehikot’s Inbox shows it here with its output open. Results are quiet news there and never ask for your attention.',
         'From a shell or a git hook, kehikot-queue run followed by a command queues it, waits its turn and exits with its exit code. If Queue is not running, it runs the command right there.',
-        'Settings › Modules › Queue sets how many runs go at once, how busy the computer may be before new runs wait, and how long a run waits before it starts anyway.',
+        'Stop a leased dev server you no longer want with its Stop button.',
+        'Settings › Modules › Queue sets how many runs go at once, how many of each kind, how busy the computer may be before new runs wait, how long a run waits before it starts anyway, and how many dev servers may be leased.',
       ],
     },
     {
@@ -33,6 +35,7 @@ export const HELP = {
       points: [
         'queue_run puts a command in the queue and answers at once with its id; queue_wait waits for the result, and queue_status shows the queue or one run.',
         'queue_cancel cancels the runs of the agent’s own conversation, never another’s.',
+        'queue_lease runs a dev server in a leased slot on a free port; it stops when released, when its time runs out, or when its session ends.',
         'When a run ends and nothing waits on it, the session that asked is told the result in one line.',
         'The /queue skill asks an agent to run this work’s tests, a build or another heavy command through the queue and report.',
       ],
@@ -40,7 +43,7 @@ export const HELP = {
     {
       title: 'Rules',
       points: [
-        'A push run, a pre-push hook a person waits on, goes before every other kind; otherwise first come, first served.',
+        'A push run, a pre-push hook a person waits on, goes before every other kind; otherwise first come, first served, except that a run whose kind is already running as many as it may waits and the next one starts.',
         'A run’s pass or fail is its command’s own exit code. It runs in the folder it was asked in, with anything that looks like a secret left out of its environment.',
         'It never runs anything it was not asked to run. Cancelling and moving runs from the page are yours alone.',
       ],
@@ -97,7 +100,7 @@ export const DECLARED: Manifest = manifestSchema.parse({
     + 'with `queue_cancel` when done) or `kehikot-queue lease dev -- <command>` from a shell.',
   /* What every agent session is told about it (protocol 2.36.0): beside its name where it is on the
      kehikko, and — for a session on a kehikko it is NOT on, while it is installed here — the second. */
-  agentSays: "Run heavy commands — tests, builds, big installs — through the Queue (queue_run, then its wait line as a background shell command) instead of in the shell, and dev servers through queue_lease, so sessions don't collide.",
+  agentSays: "Run heavy commands — tests, builds, big installs — through the Queue (queue_run, then its wait line as a background shell command) instead of in the shell, so sessions don't collide.",
   absentSays: "Don't start heavy commands (test suites, builds, big installs) directly. If the person insists, suggest adding Queue to this kehikko so runs don't collide.",
   /* "How to use" (protocol 2.52.0). */
   help: HELP,
@@ -111,7 +114,7 @@ export const DECLARED: Manifest = manifestSchema.parse({
   mcp: {
     url: '/mcp',
     transport: 'http',
-    about: 'Queue heavy work on this computer — test suites, builds, other resource-intensive commands (queue_run), see the queue (queue_status), wait for a result (queue_wait), cancel your own (queue_cancel), and lease a slot for a dev server (queue_lease).',
+    about: 'Queue heavy work — tests, builds, other heavy commands (queue_run), see it (queue_status), wait (queue_wait), cancel (queue_cancel), lease a dev-server slot (queue_lease).',
   },
   extensions: { emits: [], consumes: [] },
   /* Runs are this computer's, not a part's: nothing to narrow. */
