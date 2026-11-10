@@ -14,3 +14,9 @@ from this module's side:
   install text or hype. Never invent.
 - "Bug fixes and improvements", TODO, TBD and placeholders are refused, and so is
   a file without bullets.
+
+When a release changes what an agent session sees or may do (a new or changed
+tool, a rule, a guard), end the file with a `## For agents` section: one or two
+bullets in the agent's terms, tool names welcome. Sessions already running are
+told them once, at their next prompt after the update; people never see them in
+Kehikot. A release with nothing new for agents has no section.
