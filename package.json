@@ -1,6 +1,6 @@
 {
   "name": "kehikko-queue",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "private": true,
   "type": "module",
   "description": "Queue, a module a Kehikot host frames: one machine-wide queue for heavy work (test suites, builds, other resource-intensive commands) from every session, started when there is room.",
