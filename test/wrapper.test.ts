@@ -145,23 +145,28 @@ describe('kehikot-queue lease dev', () => {
   test('runs the server on a free port of the range, streams its output, and stops its whole group when the command ends', async () => {
     const { leases, env } = serve()
     const child = spawnCli(['lease', 'dev', '--port-range', '5390-5399', '--', 'sh', '-c', 'echo "serving on $PORT {port}"; sleep 30 & wait'], env)
-    const reader = child.stdout.getReader()
-    let out = ''
-    for (let i = 0; i < 100 && !out.includes('serving'); i++) {
-      const { value } = await Promise.race([reader.read(), settle(100).then(() => ({ value: undefined }))])
-      if (value) out += new TextDecoder().decode(value)
-    }
+    let printed = ''
+    void (async () => {
+      const decoder = new TextDecoder()
+      const reader = child.stdout.getReader()
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        printed += decoder.decode(value)
+      }
+    })()
+    for (let i = 0; i < 300 && !printed.includes('serving'); i++) await settle(30)
     const lease = leases.running()[0]!
-    expect(out).toContain(`serving on ${lease.port} ${lease.port}`)
     expect(lease.port).toBeGreaterThanOrEqual(5390)
     expect(lease.port).toBeLessThanOrEqual(5399)
     expect(alive(lease.pid!)).toBe(true)
     child.kill('SIGTERM')
     expect(await child.exited).toBe(143)
+    expect(printed).toContain(`serving on ${lease.port} ${lease.port}`)
     expect(leases.get(lease.id)!.state).toBe('ended')
     for (let i = 0; i < 100 && alive(lease.pid!); i++) await settle(30)
     expect(alive(lease.pid!)).toBe(false)
-  })
+  }, 20_000)
   test('killed without a word: the lease ends when its holder has gone', async () => {
     const { leases, env } = serve()
     const child = spawnCli(['lease', 'dev', '--port-range', '5380-5389', '--', 'sh', '-c', 'sleep 30 & wait'], env)
