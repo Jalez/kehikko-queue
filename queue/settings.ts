@@ -23,8 +23,15 @@ export function readValues(dir: string): Record<string, unknown> {
   }
 }
 
+const LISTS = ['guard_commands', 'guard_scripts', 'guard_direct']
+
 /** One checked change. A sentence refuses it. */
 export function writeValue(dir: string, key: string, value: unknown): string | null {
+  if (key === 'guards') return typeof value === 'boolean' ? save(dir, key, value) : 'That is on or off.'
+  if (LISTS.includes(key)) {
+    if (!Array.isArray(value) || value.length > 32 || value.some((one) => typeof one !== 'string' || one.length > 120)) return 'That is a list of at most 32 lines, each at most 120 characters.'
+    return save(dir, key, value.map((one: string) => one.trim()).filter(Boolean))
+  }
   if (typeof value !== 'number' || !Number.isFinite(value)) return 'That is a number.'
   if (key === 'most' && (!Number.isInteger(value) || value < 0 || value > 64)) return 'Runs at once is a whole number from 0 to 64.'
   if (key === 'load' && (value < 0.1 || value > 16)) return 'Busy above is a load per core from 0.1 to 16.'
@@ -32,6 +39,10 @@ export function writeValue(dir: string, key: string, value: unknown): string | n
   if (KIND_KEYS.includes(key) && (!Number.isInteger(value) || value < 0 || value > 64)) return 'A limit for a kind is a whole number from 0 to 64 (0: none of its own).'
   if (key === 'leases' && (!Number.isInteger(value) || value < 0 || value > 32)) return 'Dev servers at once is a whole number from 0 to 32.'
   if (!['most', 'load', 'wait', 'leases', ...KIND_KEYS].includes(key)) return 'There is no such setting.'
+  return save(dir, key, value)
+}
+
+function save(dir: string, key: string, value: unknown): null {
   const next = { ...readValues(dir), [key]: value }
   const temporary = `${file(dir)}.${process.pid}.tmp`
   writeFileSync(temporary, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 })

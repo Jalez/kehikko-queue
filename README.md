@@ -75,6 +75,17 @@ variable, and shows with the run on the page, in the footer and in `queue_status
 line. Inside a queued run (`KEHIKOT_QUEUE_RUN` is set for it) `run` runs the command at once: a run
 never waits behind itself.
 
+**Guards: agents held to the queue without being asked.** Queue declares two guards in its manifest
+(protocol 2.61.0), which the agent modules' hooks enforce for every session on a kehikko Queue is on,
+subagents included. A typecheck, a test suite, browser tests, a build, an install, and the
+package.json scripts named for them (`test*`, `typecheck`, `build`…) are rewritten to
+`kehikot-queue run --guard -- sh -c '<the command>'`; dev servers (`vite`, `bun run dev`…) to
+`kehikot-queue lease dev --guard -- sh -c '<the command>'`. With `--guard` the CLI decides per
+project, from its package.json: a script whose own line is light, or a test run of one file, runs at
+once and says nothing; the rest is queued as its kind. `KEHIKOT_DIRECT=1` in front of a command runs it
+directly. Settings › Modules adds commands and scripts to queue, commands always run directly, or turns
+the guards off.
+
 **Limits by kind.** Besides "Runs at once" and the load guard, each kind has its own limit,
 machine-wide, in Kehikot's Settings › Modules: e2e (Playwright) 1, typecheck 1, test suites 2, builds
 1, other tasks 2. A run whose kind is full waits, and the next in line whose kind has room starts.

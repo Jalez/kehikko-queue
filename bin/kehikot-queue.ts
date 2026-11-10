@@ -22,6 +22,12 @@
  * agent CLI's own session variable. Inside a queued run (KEHIKOT_QUEUE_RUN) it runs the command at
  * once: a run never waits behind itself.
  *
+ * --guard: what a module guard rewrote an agent's shell command to (`run --guard -- sh -c LINE`,
+ * `lease dev --guard -- sh -c LINE`). It decides here whether LINE is heavy work in THIS project
+ * (bin/guard-plan.ts, from its package.json): heavy is queued as its kind; light (one test file, a
+ * script that is not heavy, --version) runs at once, saying nothing, as if no guard were there. So
+ * does a line with KEHIKOT_DIRECT=1.
+ *
  * `lease dev` runs a dev server in one of a few leased slots (Settings › Modules, "Dev servers at
  * once"), on a free port of --port-range (default 5280-5299), given as $PORT and in place of {port}
  * in the command. Queue starts it in a process group of its own and stops that group when this
@@ -53,6 +59,8 @@ import { execFileSync, spawn } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
+
+import { escaped, planOf } from './guard-plan.ts'
 
 const ID = 'kehikot.queue'
 const TOKEN_HEADER = 'x-kehikot-queue-token'
@@ -116,6 +124,8 @@ export interface Parsed {
   session: string | null
   /** Which agent asks, in its own words. */
   agent: string | null
+  /** Rewritten to this by a guard: decide here whether the command is heavy in this project (`guard-plan.ts`). */
+  guard: boolean
   argv: string[]
 }
 
@@ -149,7 +159,7 @@ export function autoLabel(argv: readonly string[], cwd: string): string {
 const KIND_ALIASES: Record<string, string> = { unit: 'verify', test: 'verify', tests: 'verify', playwright: 'e2e', tsc: 'typecheck' }
 
 export function parse(args: string[], env: Env = process.env): Parsed | string {
-  const out: Parsed = { kind: 'verify', label: null, refs: [], epic: null, place: env.KEHIKOT_PLACE || null, keep: [], from: null, expect: null, preflight: null, checks: true, session: sessionOf(env), agent: agentOf(env), argv: [] }
+  const out: Parsed = { kind: 'verify', label: null, refs: [], epic: null, place: env.KEHIKOT_PLACE || null, keep: [], from: null, expect: null, preflight: null, checks: true, session: sessionOf(env), agent: agentOf(env), guard: false, argv: [] }
   for (let at = 0; at < args.length; at++) {
     const arg = args[at]!
     if (arg === '--') {
@@ -167,6 +177,7 @@ export function parse(args: string[], env: Env = process.env): Parsed | string {
     else if (arg === '--no-checks') out.checks = false
     else if (arg === '--session') out.session = value()?.slice(0, 128) || null
     else if (arg === '--agent') out.agent = value()?.slice(0, 60) || null
+    else if (arg === '--guard') out.guard = true
     else if (arg === '--preflight') {
       const line = value()?.trim()
       if (!line) return '--preflight takes one shell line, quoted: --preflight \'bun install --frozen-lockfile --dry-run\'.'
@@ -231,7 +242,27 @@ export function exitFor(run: RunView): number {
   return run.exit !== null && run.exit !== 0 ? run.exit : 1
 }
 
+/** The line a guard's rewrite runs (`sh -c LINE`), or null when the command is not one. */
+export const guardedLine = (argv: readonly string[]): string | null => (argv.length === 3 && /(^|\/)(sh|bash|zsh)$/.test(argv[0]!) && argv[1] === '-c' ? argv[2]! : null)
+
+/** Run the command here, now, saying nothing: what a guard's rewrite does with light work, as if no guard were there. */
+export function quietly(argv: string[]): Promise<number> {
+  return new Promise((done) => {
+    const child = spawn(argv[0]!, argv.slice(1), { stdio: 'inherit' })
+    child.on('error', () => done(127))
+    child.on('exit', (code, signal) => done(code ?? 128 + signalNumber(signal)))
+  })
+}
+
 export async function queued(parsed: Parsed, env: Env = process.env, cwd = process.cwd()): Promise<number> {
+  if (parsed.guard) {
+    const line = guardedLine(parsed.argv)
+    if (line === null || escaped(line, env)) return quietly(parsed.argv)
+    const plan = planOf(line, cwd)
+    if ('direct' in plan) return quietly(parsed.argv)
+    parsed.kind = plan.queue
+    parsed.from ??= `${parsed.agent ? `${parsed.agent}'s` : 'an agent\'s'} shell, through Queue's guard`
+  }
   if (env.KEHIKOT_QUEUE_RUN) return direct(parsed.argv, `This is already inside queued run ${env.KEHIKOT_QUEUE_RUN}, so it does not wait behind it.`, true)
   const { url, token } = where(env)
   if (!url) return direct(parsed.argv, 'Queue is not registered on this computer.')
@@ -418,6 +449,7 @@ function psParent(pid: number): { ppid: number; command: string } | null {
 }
 
 export interface LeaseParsed {
+  guard?: boolean
   range: string | null
   ttl: number | null
   label: string | null
@@ -446,6 +478,7 @@ export function parseLease(args: string[], env: Env = process.env): LeaseParsed 
     else if (arg === '--session') out.session = value()?.slice(0, 128) || null
     else if (arg === '--agent') out.agent = value()?.slice(0, 60) || null
     else if (arg === '--keep-env') out.keep.push(value() ?? '')
+    else if (arg === '--guard') out.guard = true
     else return `I do not know ${arg}. Put the command after --.`
   }
   if (!out.argv.length) return 'Put the dev server\'s command after --: kehikot-queue lease dev --port-range 5280-5299 -- bun run dev'
@@ -455,6 +488,11 @@ export function parseLease(args: string[], env: Env = process.env): LeaseParsed 
 
 /** `lease dev`: run a dev server in a leased slot, print its output, and release it when this ends. */
 export async function leased(parsed: LeaseParsed, env: Env = process.env, cwd = process.cwd()): Promise<number> {
+  if (parsed.guard) {
+    const line = guardedLine(parsed.argv)
+    /* A question to the tool, or a line that asks to pass every guard, is not a dev server to lease. */
+    if (line === null || escaped(line, env) || /(^|\s)(--version|-v|--help|-h)(\s|$)/.test(line)) return quietly(parsed.argv)
+  }
   const { url, token } = where(env)
   const port = parsed.range ? Number(parsed.range.split('-')[0]) : 5280
   const here = (why: string) => {
