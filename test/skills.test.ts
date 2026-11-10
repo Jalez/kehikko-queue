@@ -9,7 +9,10 @@ describe('the skills', () => {
       const text = skillText(one.name)!
       expect(text).toContain('disable-model-invocation: true')
       expect(text).toContain('http://127.0.0.1:9573')
-      expect(text).not.toMatch(/\{\{(origin|version)\}\}/)
+      expect(text).not.toMatch(/\{\{(origin|version|cli)\}\}/)
+      /* Queue is asked through its CLI, which follows it to a new port; without the tools, the CLI runs the work. */
+      expect(text).toContain("' status")
+      expect(text).toContain("' run --kind")
     }
   })
 

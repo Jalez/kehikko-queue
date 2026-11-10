@@ -29,7 +29,7 @@ const scratch = () => {
 }
 
 async function cli(args: string[], env: Record<string, string>) {
-  const child = Bun.spawn([CLI, ...args], { env: { PATH: process.env.PATH!, HOME: scratch(), ...env }, stdout: 'pipe', stderr: 'pipe', cwd: tmpdir() })
+  const child = Bun.spawn([CLI, ...args], { env: { PATH: process.env.PATH!, HOME: scratch(), KEHIKOT_ORIGINS: 'http://127.0.0.1:9', KEHIKOT_QUEUE_PATIENCE: '0', ...env }, stdout: 'pipe', stderr: 'pipe', cwd: tmpdir() })
   const [out, err, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited])
   return { out, err, code }
 }
