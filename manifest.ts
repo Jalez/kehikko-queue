@@ -98,7 +98,8 @@ export const DECLARED: Manifest = manifestSchema.parse({
     + 'its result as long as it takes: run the `kehikot-queue wait <id>` line it answers as a background shell command, or call '
     + '`queue_wait`; never poll the load. A failed run\'s answer has the end of its output. When nothing waits on a run as it '
     + 'ends, Kehikot types its result into the session that asked. A dev server goes in a leased slot: `queue_lease` (release it '
-    + 'with `queue_cancel` when done) or `kehikot-queue lease dev -- <command>` from a shell.',
+    + 'with `queue_cancel` when done) or `kehikot-queue lease dev -- <command>`. Without the queue_* tools (Kehikot restarted '
+    + 'and they did not come back), use Queue\'s CLI, named in its wait lines: `kehikot-queue run -- <command>` in the background.',
   /* What every agent session is told about it (protocol 2.36.0): beside its name where it is on the
      kehikko, and — for a session on a kehikko it is NOT on, while it is installed here — the second. */
   agentSays: "Run heavy commands — tests, builds, big installs — through the Queue (queue_run, then its wait line as a background shell command) instead of in the shell, so sessions don't collide.",

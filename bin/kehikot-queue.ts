@@ -59,9 +59,17 @@
  * output, and exits with its exit code like `run` does. Ctrl-C stops waiting; the run goes on. Run
  * it as a background command and whoever started it is told when it exits.
  *
- * Finds Queue at the address its registration names (Kehikot's module registry), or
- * KEHIKOT_QUEUE_URL. Gets in with the token in the queue's own folder, which only this user can
- * read. Only node's built-in modules here, so this one file can be linked onto PATH as it is.
+ * Finds Queue at the address its registration names (Kehikot's module registry), read again at
+ * every look so a Queue that moved to another port is followed, else at the host's stable address
+ * for it (`<host>/m/kehikot.queue`), or only at KEHIKOT_QUEUE_URL when that is set. Gets in with
+ * the token in the queue's own folder, which only this user can read. Only node's built-in modules
+ * here, so this one file can be linked onto PATH as it is.
+ *
+ * When Kehikot restarts, Queue is away for a while. A Queue that is registered here and has run
+ * before is waited for, up to KEHIKOT_QUEUE_PATIENCE seconds (20), before anything runs outside
+ * it: a guard's rewrite is then queued as soon as Queue answers again, not run unguarded. Only
+ * when it never answers does the command run here, and this says so. A run being followed when
+ * Queue goes away is found again wherever Queue comes back.
  */
 import { execFileSync, spawn } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
@@ -96,21 +104,86 @@ export function queueDir(env: Env = process.env, platform: string = process.plat
 }
 
 export function where(env: Env = process.env, platform: string = process.platform): { url: string | null; token: string | null } {
+  const found = addresses(env, platform)
+  return { url: found.registered, token: found.token }
+}
+
+/** Whether a string is an address this CLI asks: http to this machine, no path, no trailing slash. */
+const LOOPBACK = /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/
+
+/**
+ * The host's stable addresses for Queue (`<host>/m/kehikot.queue`, the host proxying to wherever
+ * Queue bound): one per loopback http origin in KEHIKOT_ORIGINS or KEHIKOT_ORIGIN, else the app's
+ * own (`http://127.0.0.1:4170`) — but only for the machine's own registry: with KEHIKOT_MODULES_DIR
+ * moved (a test, another setup) no host is assumed.
+ */
+export function hostAddresses(env: Env = process.env): string[] {
+  const said = [...(env.KEHIKOT_ORIGINS ?? '').split(/\s+/), ...(env.KEHIKOT_ORIGIN ?? '').split(/\s+/)].map((one) => one.replace(/\/+$/, '')).filter((one) => LOOPBACK.test(one))
+  const hosts = said.length ? said : env.KEHIKOT_MODULES_DIR ? [] : ['http://127.0.0.1:4170']
+  return [...new Set(hosts.map((one) => one.replace('//localhost', '//127.0.0.1')))].slice(0, 4).map((one) => `${one}/m/${ID}`)
+}
+
+/**
+ * Every address Queue may answer at, in the order asked: KEHIKOT_QUEUE_URL alone when it is set;
+ * else what its registration names now, then the host's stable addresses. `known`: Queue is
+ * registered here (or named), so it is worth waiting for while Kehikot restarts.
+ */
+export function addresses(env: Env = process.env, platform: string = process.platform): { urls: string[]; registered: string | null; known: boolean; token: string | null } {
   let token: string | null = null
   try {
     token = readFileSync(join(queueDir(env, platform), 'token'), 'utf8').trim() || null
   } catch {
     /* No token: the queue never ran here. */
   }
-  if (env.KEHIKOT_QUEUE_URL) return { url: env.KEHIKOT_QUEUE_URL.replace(/\/+$/, ''), token }
+  if (env.KEHIKOT_QUEUE_URL) {
+    const url = env.KEHIKOT_QUEUE_URL.replace(/\/+$/, '')
+    return { urls: [url], registered: url, known: true, token }
+  }
   const registry = env.KEHIKOT_MODULES_DIR || join(machineDir(env, platform), 'modules')
   const file = join(registry, `${ID}.json`)
-  if (!existsSync(file)) return { url: null, token }
+  if (!existsSync(file)) return { urls: [], registered: null, known: false, token }
+  let registered: string | null = null
   try {
     const url = (JSON.parse(readFileSync(file, 'utf8')) as { url?: unknown }).url
-    return { url: typeof url === 'string' && /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(url.replace(/\/+$/, '')) ? url.replace(/\/+$/, '') : null, token }
+    const bare = typeof url === 'string' ? url.replace(/\/+$/, '') : ''
+    registered = LOOPBACK.test(bare) ? bare : null
   } catch {
-    return { url: null, token }
+    /* Being rewritten, or not JSON: the host's address still may answer. */
+  }
+  return { urls: [...new Set([...(registered ? [registered] : []), ...hostAddresses(env)])], registered, known: true, token }
+}
+
+/** How long a registered Queue that does not answer is waited for, in ms: KEHIKOT_QUEUE_PATIENCE seconds, else 20. */
+export function patienceOf(env: Env = process.env): number {
+  const said = Number(env.KEHIKOT_QUEUE_PATIENCE)
+  return env.KEHIKOT_QUEUE_PATIENCE !== undefined && env.KEHIKOT_QUEUE_PATIENCE !== '' && Number.isFinite(said) && said >= 0 ? Math.min(said, 600) * 1000 : 20_000
+}
+
+/** How often a Queue that is away is looked for again while it is waited for. */
+const LOOK_EVERY_MS = 1000
+
+/**
+ * Where Queue answers now: the first of its addresses (read again at every look) whose `/healthz`
+ * says it is Queue. Looks again every second for up to `patience` ms while none does — Kehikot
+ * restarting — saying once that it waits. Null when none answered in that time.
+ */
+export async function locate(env: Env = process.env, patience = 0, say: ((line: string) => void) | null = SAY): Promise<string | null> {
+  const until = Date.now() + patience
+  let told = false
+  for (;;) {
+    const { urls } = addresses(env)
+    const asked = await Promise.all(urls.map(async (url) => ((await healthy(url)) ? url : null)))
+    const found = asked.find((one) => one !== null)
+    if (found) {
+      if (told) say?.(`Queue answers again at ${found}.`)
+      return found
+    }
+    if (Date.now() >= until) return null
+    if (!told && say) {
+      told = true
+      say(`Queue did not answer${urls.length ? ` (asked ${urls.join(', ')})` : ''}. Kehikot may be restarting: waiting up to ${Math.round(patience / 1000)} s for it before running anything outside the queue.`)
+    }
+    await new Promise((done) => setTimeout(done, Math.min(LOOK_EVERY_MS, Math.max(0, until - Date.now()))))
   }
 }
 
@@ -281,10 +354,12 @@ export async function queued(parsed: Parsed, env: Env = process.env, cwd = proce
     parsed.from ??= `${parsed.agent ? `${parsed.agent}'s` : 'an agent\'s'} shell, through Queue's guard`
   }
   if (env.KEHIKOT_QUEUE_RUN) return direct(parsed.argv, `This is already inside queued run ${env.KEHIKOT_QUEUE_RUN}, so it does not wait behind it.`, true)
-  const { url, token } = where(env)
-  if (!url) return direct(parsed.argv, 'Queue is not registered on this computer.')
+  const { known, token } = addresses(env)
+  if (!known) return direct(parsed.argv, 'Queue is not registered on this computer.')
   if (!token) return direct(parsed.argv, 'Queue has not run on this computer yet (no token).')
-  if (!(await healthy(url))) return direct(parsed.argv, `Queue is not running (nothing answered at ${url}).`)
+  const patience = patienceOf(env)
+  const url = await locate(env, patience)
+  if (!url) return direct(parsed.argv, patience ? `Queue is not running (nothing answered for ${Math.round(patience / 1000)} s; if Kehikot is restarting, it is taking longer).` : 'Queue is not running (nothing answered).')
   const headers = { 'content-type': 'application/json', [TOKEN_HEADER]: token }
   /* A stop asked for while the run is being queued is held, and acted on as soon as its id is known. */
   let stopAsked = false
@@ -347,7 +422,8 @@ export async function queued(parsed: Parsed, env: Env = process.env, cwd = proce
     if (gone) return
     gone = true
     SAY(`cancelling ${id}…`)
-    await fetch(`${url}/api/queue/cancel`, { method: 'POST', headers, body: JSON.stringify({ id, key }) }).catch(() => {})
+    const at = (await locate(env, 0, null)) ?? url
+    await fetch(`${at}/api/queue/cancel`, { method: 'POST', headers, body: JSON.stringify({ id, key }) }).catch(() => {})
     process.exit(130)
   }
   for (const signal of STOPS) {
@@ -356,7 +432,7 @@ export async function queued(parsed: Parsed, env: Env = process.env, cwd = proce
   }
   if (stopAsked) await cancel()
 
-  return follow(url, token, id, { expect: parsed.expect, instead: (why) => direct(parsed.argv, why) })
+  return follow(url, token, id, { expect: parsed.expect, instead: (why) => direct(parsed.argv, why), find: () => locate(env, 0, null) })
 }
 
 /** The CLI as a shell runs it (the wrapper beside this file), quoted: its path has spaces on macOS. */
@@ -380,7 +456,8 @@ export function detachedLine(id: string, run: { state?: string; position?: numbe
  * the queue, not the command, is the trouble (it lost the run, or never started it): `run` runs the
  * command here; `wait` has nothing to run and says so.
  */
-export async function follow(url: string, token: string, id: string, options: { expect: 'fail' | null; instead: ((why: string) => Promise<number>) | null }): Promise<number> {
+export async function follow(start: string, token: string, id: string, options: { expect: 'fail' | null; instead: ((why: string) => Promise<number>) | null; find?: () => Promise<string | null> }): Promise<number> {
+  let url = start
   const insteadOr = (why: string, code: number) => (options.instead ? options.instead(why) : (SAY(why), Promise.resolve(code)))
   let from = 0
   let said = ''
@@ -436,6 +513,8 @@ export async function follow(url: string, token: string, id: string, options: { 
       return 75
     }
     await new Promise((done) => setTimeout(done, 2000))
+    /* Queue may come back on another port (Kehikot restarted): follow it there. */
+    url = (await options.find?.().catch(() => null)) ?? url
   }
 }
 
@@ -445,8 +524,9 @@ export async function waitOn(id: string, env: Env = process.env): Promise<number
     SAY('wait takes a run\'s id, as queue_run or kehikot-queue status says it: kehikot-queue wait r1a2b3c.')
     return 2
   }
-  const { url, token } = where(env)
-  if (!url || !token || !(await healthy(url))) {
+  const { known, token } = addresses(env)
+  const url = known && token ? await locate(env, patienceOf(env)) : null
+  if (!url || !token) {
     SAY(`Queue is not running here, so ${id} cannot be waited on.`)
     return 69
   }
@@ -454,7 +534,7 @@ export async function waitOn(id: string, env: Env = process.env): Promise<number
     SAY(`stopped waiting; ${id} goes on in the queue.`)
     process.exit(130)
   })
-  return follow(url, token, id, { expect: null, instead: null })
+  return follow(url, token, id, { expect: null, instead: null, find: () => locate(env, 0, null) })
 }
 
 /** An agent CLI's own process, by its command's name. */
@@ -534,7 +614,7 @@ export async function leased(parsed: LeaseParsed, env: Env = process.env, cwd = 
     /* A question to the tool, or a line that asks to pass every guard, is not a dev server to lease. */
     if (line === null || escaped(line, env) || /(^|\s)(--version|-v|--help|-h)(\s|$)/.test(line)) return quietly(parsed.argv)
   }
-  const { url, token } = where(env)
+  const { known, token } = addresses(env)
   const port = parsed.range ? Number(parsed.range.split('-')[0]) : 5280
   const here = (why: string) => {
     /* No queue: the server runs here, as asked, on the first port of the range. */
@@ -549,9 +629,11 @@ export async function leased(parsed: LeaseParsed, env: Env = process.env, cwd = 
       child.on('exit', (code, signal) => done(code ?? 128 + signalNumber(signal)))
     })
   }
-  if (!url) return here('Queue is not registered on this computer.')
+  if (!known) return here('Queue is not registered on this computer.')
   if (!token) return here('Queue has not run on this computer yet (no token).')
-  if (!(await healthy(url))) return here(`Queue is not running (nothing answered at ${url}).`)
+  const patience = patienceOf(env)
+  let url = await locate(env, patience)
+  if (!url) return here(`Queue is not running (nothing answered${patience ? ` for ${Math.round(patience / 1000)} s` : ''}).`)
   const headers = { 'content-type': 'application/json', [TOKEN_HEADER]: token }
   let answer: { ok?: boolean; id?: string; key?: string; port?: number; until?: number; error?: string }
   try {
@@ -589,7 +671,8 @@ export async function leased(parsed: LeaseParsed, env: Env = process.env, cwd = 
     if (gone) return
     gone = true
     SAY(`releasing ${id}: stopping the dev server…`)
-    await fetch(`${url}/api/queue/lease/release`, { method: 'POST', headers, body: JSON.stringify({ id, key }) }).catch(() => {})
+    const at = (await locate(env, 0, null)) ?? url
+    await fetch(`${at}/api/queue/lease/release`, { method: 'POST', headers, body: JSON.stringify({ id, key }) }).catch(() => {})
     process.exit(code)
   }
   process.once('SIGINT', () => void release(130))
@@ -640,14 +723,15 @@ export async function leased(parsed: LeaseParsed, env: Env = process.env, cwd = 
       return 75
     }
     await new Promise((done) => setTimeout(done, 2000))
+    url = (await locate(env, 0, null).catch(() => null)) ?? url
   }
 }
 
 const refusedLease = (answer: { ok?: boolean; id?: string; key?: string }) => !answer.ok || !answer.id || !answer.key
 
 async function status(env: Env = process.env): Promise<number> {
-  const { url } = where(env)
-  if (!url || !(await healthy(url))) {
+  const url = addresses(env).known ? await locate(env, patienceOf(env)) : null
+  if (!url) {
     SAY('Queue is not running.')
     return 1
   }

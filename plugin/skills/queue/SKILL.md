@@ -2,14 +2,16 @@
 name: queue
 description: Run this work's tests, a build or another heavy command through Kehikot's Queue instead of starting it now, and report the result. Only a person runs it, by typing /queue.
 disable-model-invocation: true
-allowed-tools: Bash(curl:*), Bash('{{cli}}' wait:*), mcp__queue__queue_run, mcp__queue__queue_wait, mcp__queue__queue_status
+allowed-tools: Bash('{{cli}}' status:*), Bash('{{cli}}' wait:*), Bash('{{cli}}' run:*), mcp__queue__queue_run, mcp__queue__queue_wait, mcp__queue__queue_status
 ---
 
-The person typed `/queue $ARGUMENTS`. Kehikot's Queue module answers at {{origin}}. Whether it is up, then curl's own report in brackets:
+The person typed `/queue $ARGUMENTS`. Whether Kehikot's Queue module is up — its CLI finds it wherever it runs now, through its registration or Kehikot's own address for it (`{{origin}}` when this skill was written), and waits a little while Kehikot restarts:
 
-!`curl -s -m 5 -w '\n[curl exit %{exitcode}; HTTP %{http_code}]\n' {{origin}}/healthz || echo "[no answer from {{origin}}]"`
+!`'{{cli}}' status 2>&1 | head -n 5 || true`
 
-If the answer above does not name `kehikot.queue`, or you have no `mcp__queue__queue_run` tool, tell the person in one line: "Kehikot: couldn't reach the Queue module at {{origin}}. Open Queue on a kehikko and turn its tools on in Kehikot's Settings › Module tools, then try /queue again. [skill {{version}}]" — and stop.
+If the answer above says Queue is not running, tell the person in one line: "Kehikot: couldn't reach the Queue module. Open Queue on a kehikko (or wait for Kehikot to finish restarting), then try /queue again. [skill {{version}}]" — and stop.
+
+If Queue is up but you have no `mcp__queue__queue_run` tool (Kehikot restarted and your tools did not come back), use its CLI from the shell instead of the tools below: run `'{{cli}}' run --kind <kind> --label "<label>" -- <command>` in the folder you are working in, as a background Bash command (Claude Code: `run_in_background: true`). It queues the command, waits its turn, prints its output and exits with its exit code; then go to step 4. The person can bring the tools back with `/mcp reconnect all`.
 
 Otherwise:
 
