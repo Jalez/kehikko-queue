@@ -20,9 +20,9 @@ import {
   queueSaid,
   queueTip,
   recentResults,
-  resultTip,
   resultsSaid,
-  runningOver,
+  queueOver,
+  queueLine,
   stepped,
   strainSaid,
   tileLayout,
@@ -99,13 +99,23 @@ describe('levels, from the container\'s own size', () => {
 
 describe('what a glance says', () => {
   test('the queue: running of the most at once, and waiting', () => {
-    expect(queueSaid(queueNow(RUNS, machine))).toBe('1 of 2 running, 1 waiting.')
-    expect(queueSaid({ running: 0, waiting: 0, most: 4 })).toBe('0 of 4 running, none waiting.')
+    expect(queueSaid(queueNow(RUNS, machine))).toBe('1 waiting, 1 of 2 running.')
+    expect(queueSaid({ running: 0, waiting: 0, most: 4 })).toBe('none waiting, 0 of 4 running.')
+    expect(queueLine({ running: 1, waiting: 2 })).toBe('2 waiting · 1 running')
+    expect(queueLine({ running: 0, waiting: 0 })).toBe('none waiting · 0 running')
   })
-  test('how many ran at each moment of the window, the last one now', () => {
-    const over = runningOver(RUNS, 5000, 4000, 4)
+  test('how many waited and how many ran at each moment of the window, the last one now', () => {
+    const over = queueOver(RUNS, 5000, 4000, 4)
+    expect(over.map((one) => one.waiting)).toEqual([4, 2, 2, 1, 1])
     expect(over.map((one) => one.running)).toEqual([1, 3, 2, 1, 1])
     expect(over.at(-1)!.at).toBe(5000)
+  })
+  test('a run cancelled in line stops waiting when it ended; one still queued waits to now', () => {
+    const runs = [
+      aRun({ id: 'c', state: 'cancelled', queuedAt: 1000, startedAt: null, finishedAt: 3000, exit: null }),
+      aRun({ id: 'q', state: 'queued', queuedAt: 2500, startedAt: null, finishedAt: null, exit: null }),
+    ]
+    expect(queueOver(runs, 4000, 3000, 3).map((one) => [one.at, one.waiting, one.running])).toEqual([[1000, 1, 0], [2000, 1, 0], [3000, 1, 0], [4000, 1, 0]])
   })
   test('the strain, with the samples\' range, and when it holds new runs', () => {
     expect(strainSaid(machine, machine.samples!)).toBe('Load 3.2 on 12 cores; new runs wait above 9.0. Over the last 2 min it went from 1.5 to 3.2.')
@@ -129,15 +139,15 @@ describe('the page at each size', () => {
       const { api } = fakeApi(RUNS)
       render(<Screen host={host()} api={api} now={() => 5000} box={{ width, height: 200 }} />)
       await settle()
-      expect(screen.getByTestId('tile-queue-value').textContent).toBe('1/2 running')
+      expect(screen.getByTestId('tile-queue-value').textContent).toBe('1 waiting')
+      expect(within(screen.getByTestId('tile-queue')).getByText('1/2 running')).toBeTruthy()
+      expect(within(screen.getByTestId('tile-queue')).getByRole('heading').textContent).toBe('Waiting')
+      expect(screen.queryByTestId('tile-results')).toBeNull()
       expect(screen.getByTestId('tile-load-value').textContent).toBe('3.2 / 9.0')
-      expect(screen.getByTestId('tile-results-value').textContent).toBe('2 passed')
-      expect(within(screen.getByTestId('tile-results')).getByText('1 failed')).toBeTruthy()
       const pictures = screen.getAllByRole('img')
       expect(pictures.map((one) => one.getAttribute('aria-label'))).toEqual([
-        '1 of 2 running, 1 waiting.',
+        '1 waiting, 1 of 2 running.',
         'Load 3.2 on 12 cores; new runs wait above 9.0. Over the last 2 min it went from 1.5 to 3.2.',
-        'The last 3: 2 passed, 1 failed. Latest: “red first” (push) passed.',
       ])
       expect(document.querySelectorAll('[data-run]')).toHaveLength(0)
       expect(screen.queryByTestId('machine')).toBeNull()
@@ -208,20 +218,20 @@ describe('no result asks for the person', () => {
  */
 
 describe('the tiles\' layout at each width', () => {
-  test('one column of sparklines under 260 px, axes and a taller plot from there, three columns of sparklines from 360', () => {
+  test('one column of sparklines under 260 px, axes and a taller plot from there, two columns of sparklines from 360', () => {
     expect(tileLayout(200)).toEqual({ columns: 1, tile: 200, axes: false, plot: SPARK_HEIGHT, compact: true })
     expect(tileLayout(240)).toEqual({ columns: 1, tile: 240, axes: false, plot: SPARK_HEIGHT, compact: true })
     expect(tileLayout(280)).toEqual({ columns: 1, tile: 280, axes: true, plot: AXES_HEIGHT, compact: true })
     expect(tileLayout(320)).toEqual({ columns: 1, tile: 320, axes: true, plot: AXES_HEIGHT, compact: true })
-    /* Three columns, 1 px apart. */
-    expect(tileLayout(400)).toEqual({ columns: 3, tile: 132, axes: false, plot: SPARK_HEIGHT, compact: false })
+    /* Two columns, 1 px apart. */
+    expect(tileLayout(400)).toEqual({ columns: 2, tile: 199, axes: false, plot: SPARK_HEIGHT, compact: false })
     expect(tileLayout(null)).toEqual({ columns: 1, tile: null, axes: false, plot: SPARK_HEIGHT, compact: true })
   })
-  test('one column stands no taller than it needs: 236 px at 240 (it was 322 with cards and gaps)', () => {
-    /* Three rows of 6 + 20 + 2 + 44 + 6, and two hairlines. */
-    expect(columnHeight(tileLayout(240))).toBe(236)
-    expect(columnHeight(tileLayout(200))).toBe(236)
-    expect(columnHeight(tileLayout(280))).toBe(3 * (6 + 20 + 2 + 72 + 6) + 2)
+  test('one column stands no taller than it needs: 157 px at 240 (two tiles)', () => {
+    /* Two rows of 6 + 20 + 2 + 44 + 6, and a hairline. */
+    expect(columnHeight(tileLayout(240))).toBe(157)
+    expect(columnHeight(tileLayout(200))).toBe(157)
+    expect(columnHeight(tileLayout(280))).toBe(2 * (6 + 20 + 2 + 72 + 6) + 1)
   })
   test('a pointer picks the nearest point of a line and the bar it is over, inside the plot', () => {
     expect(indexAt(95, 200, 6, 'line')).toBe(2)
@@ -243,26 +253,21 @@ describe('the tiles\' layout at each width', () => {
 })
 
 describe('what each tooltip says', () => {
-  test('the queue: running of the most at once, and whether more could start', () => {
-    expect(queueTip({ at: 60_000, running: 1 }, 2)).toEqual({ value: '1 / 2 running', detail: '1 more can start', note: clock(60_000) })
-    expect(queueTip({ at: 60_000, running: 2 }, 2).detail).toBe('Full: new runs wait')
+  test('the queue: how many were waiting, and the running of the most at once', () => {
+    expect(queueTip({ at: 60_000, waiting: 2, running: 1 }, 2)).toEqual({ value: '2 waiting', detail: '1 / 2 running', note: clock(60_000) })
+    expect(queueTip({ at: 60_000, waiting: 3, running: 2 }, 2).detail).toBe('2 / 2 running: full')
+    expect(queueTip({ at: 60_000, waiting: 0, running: 1 }, 2).value).toBe('None waiting')
   })
   test('the load against the limit above which new runs wait', () => {
     expect(loadTip({ at: 60_000, load: 3.2 }, machine)).toEqual({ value: 'Load 3.2', detail: 'Runs wait above 9.0', note: clock(60_000) })
     expect(loadTip({ at: 60_000, load: 9.5 }, machine).detail).toBe('Holding new runs')
   })
-  test('a result: how it came out and how long it ran, which run, and when it ended', () => {
-    expect(resultTip({ id: 'p1', label: 'lint', state: 'passed', seconds: 75, at: 3500 })).toEqual({ value: 'Passed in 1 min 15 s', detail: 'lint', note: clock(3500) })
-    expect(resultTip({ id: 'c1', label: 'x', state: 'cancelled', seconds: 0, at: 0 })).toEqual({ value: 'Cancelled before start', detail: 'x', note: '' })
-  })
   test('every tooltip is three short lines at most, however large the figures and long the labels', () => {
     const tips: Tip[] = [
-      queueTip({ at: 60_000, running: 12 }, 12),
-      queueTip({ at: 60_000, running: 0 }, 128),
+      queueTip({ at: 60_000, waiting: 120, running: 12 }, 12),
+      queueTip({ at: 60_000, waiting: 0, running: 0 }, 128),
       loadTip({ at: 60_000, load: 123.45 }, { loadAbove: 99.9 }),
       loadTip({ at: 60_000, load: 0 }, { loadAbove: 99.9 }),
-      resultTip({ id: 'l', label: 'kehikko-monitor tidy-tiles verify suite, the whole of it', state: 'failed', seconds: 3 * 3600 + 59 * 60, at: 3500 }),
-      resultTip({ id: 'm', label: 'unit', state: 'cancelled', seconds: 59 * 60 + 59, at: 3500 }),
     ]
     for (const one of tips) {
       const lines = tipLines(one)
@@ -287,7 +292,7 @@ describe('the tiles drawn at each width', () => {
       await settle()
       expect(screen.getByTestId('glance').getAttribute('data-axes')).toBe(String(axes))
       expect(screen.getByTestId('glance').getAttribute('data-compact')).toBe('true')
-      for (const id of ['tile-queue', 'tile-load', 'tile-results']) {
+      for (const id of ['tile-queue', 'tile-load']) {
         const [head, plot, more] = [...screen.getByTestId(id).children] as HTMLElement[]
         expect(head?.getAttribute('data-testid')).toBe(`${id}-head`)
         const [title, sub, value] = [...head!.children] as HTMLElement[]
@@ -336,7 +341,7 @@ describe('the tiles drawn at each width', () => {
     expect(tip('tile-queue').textContent).toBe('')
     fireEvent.keyDown(document.body, { key: 'Tab' })
     fireEvent.focus(queue)
-    expect(tip('tile-queue').textContent).toBe(`1 / 2 running1 more can start${clock(5000)}`)
+    expect(tip('tile-queue').textContent).toBe(`1 waiting1 / 2 running${clock(5000)}`)
     /* Solid, 12 px, a strong border and a shadow, wrapped within a width, outside the plot. */
     const shown = tip('tile-queue')
     for (const one of ['bg-popover', 'text-xs', 'border-foreground/25', 'shadow-lg', 'break-words', 'max-w-[min(15rem,calc(100%-8px))]']) expect(shown.className).toContain(one)
@@ -354,11 +359,10 @@ describe('the tiles drawn at each width', () => {
     expect(tip('tile-load').textContent).toBe(`Load 2.4Runs wait above 9.0${clock(120_000)}`)
     fireEvent.keyDown(plot('tile-load'), { key: 'ArrowLeft' })
     expect(tip('tile-load').textContent).toContain('Load 3.2')
-    fireEvent.focus(plot('tile-results'))
-    fireEvent.keyDown(plot('tile-results'), { key: 'Home' })
-    expect(tip('tile-results').textContent).toBe(`Failed in 2 sbrokenPush · ${clock(3000)}`)
-    fireEvent.blur(plot('tile-results'))
-    expect(tip('tile-results').textContent).toBe('')
+    fireEvent.keyDown(plot('tile-queue'), { key: 'Home' })
+    expect(tip('tile-queue').textContent).toBe(`None waiting0 / 2 running${clock(5000 - 30 * 60_000)}`)
+    fireEvent.blur(plot('tile-queue'))
+    expect(tip('tile-queue').textContent).toBe('')
   })
 })
 
@@ -420,15 +424,12 @@ describe('one chart tooltip, and only while it is wanted (Test runs 0.9.2)', () 
     await draw()
     hover(plotOf('tile-queue'))
     hover(plotOf('tile-load'))
-    hover(plotOf('tile-results'))
-    expect(tip('tile-results')).not.toBe('')
+    expect(tip('tile-load')).not.toBe('')
     expect(tip('tile-queue')).toBe('')
-    expect(tip('tile-load')).toBe('')
     fireEvent.keyDown(document.body, { key: 'Tab' })
     fireEvent.focus(plotOf('tile-load'))
     fireEvent.focus(plotOf('tile-queue'))
     expect(tip('tile-load')).toBe('')
-    expect(tip('tile-results')).toBe('')
     expect(tip('tile-queue')).not.toBe('')
   })
 
@@ -451,7 +452,7 @@ describe('one chart tooltip, and only while it is wanted (Test runs 0.9.2)', () 
     fireEvent.pointerDown(document.body, { pointerType: 'mouse' })
     fireEvent.keyDown(document.body, { key: 'Tab' })
     fireEvent.focus(queue)
-    expect(tip('tile-queue')).toBe(`1 / 2 running1 more can start${clock(5000)}`)
+    expect(tip('tile-queue')).toBe(`1 waiting1 / 2 running${clock(5000)}`)
     fireEvent.blur(queue)
     expect(tip('tile-queue')).toBe('')
   })

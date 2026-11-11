@@ -51,19 +51,36 @@ export function queueNow(runs: readonly RunView[], machine: Pick<Machine, 'most'
 export const QUEUE_WINDOW_MS = 30 * 60_000
 const QUEUE_STEPS = 30
 
-/** How many runs were running at each of `steps` moments of the last `windowMs`, oldest first, the last one now. */
-export function runningOver(runs: readonly RunView[], now: number, windowMs = QUEUE_WINDOW_MS, steps = QUEUE_STEPS): Array<{ at: number; running: number }> {
-  const out: Array<{ at: number; running: number }> = []
+export interface QueuePoint {
+  at: number
+  /** How many runs were waiting in line at that moment. */
+  waiting: number
+  /** How many were running. */
+  running: number
+}
+
+/**
+ * How many runs were waiting and how many running at each of `steps` moments of the last `windowMs`,
+ * oldest first, the last one now. A run waits from when it was queued until it started (or, cancelled
+ * before it started, until it ended); it runs from its start until it ended.
+ */
+export function queueOver(runs: readonly RunView[], now: number, windowMs = QUEUE_WINDOW_MS, steps = QUEUE_STEPS): QueuePoint[] {
+  const out: QueuePoint[] = []
   for (let step = 0; step <= steps; step++) {
     const at = now - windowMs + (windowMs * step) / steps
     const running = runs.filter((run) => run.startedAt !== null && run.startedAt <= at && (run.finishedAt === null ? run.state === 'running' : run.finishedAt > at)).length
-    out.push({ at, running })
+    const waiting = runs.filter((run) => {
+      if (run.queuedAt > at) return false
+      const left = run.startedAt ?? run.finishedAt ?? (run.state === 'queued' ? Infinity : run.queuedAt)
+      return left > at
+    }).length
+    out.push({ at, waiting, running })
   }
   return out
 }
 
 export function queueSaid(now: QueueNow): string {
-  return `${now.running} of ${now.most} running, ${now.waiting ? `${now.waiting} waiting` : 'none waiting'}.`
+  return `${now.waiting ? `${now.waiting} waiting` : 'none waiting'}, ${now.running} of ${now.most} running.`
 }
 
 /* ---- the strain ---- */
@@ -79,6 +96,9 @@ export function strainSaid(machine: Pick<Machine, 'load' | 'loadAbove' | 'cores'
   const minutes = Math.max(1, Math.round((samples.at(-1)!.at - samples[0]!.at) / 60_000))
   return `${now}${held}. Over the last ${minutes} min it went from ${Math.min(...loads).toFixed(1)} to ${Math.max(...loads).toFixed(1)}.`
 }
+
+/** The queue's footer text and its tile's words: "2 waiting · 1 running". */
+export const queueLine = (now: Pick<QueueNow, 'running' | 'waiting'>): string => `${now.waiting ? `${now.waiting} waiting` : 'none waiting'} · ${now.running} running`
 
 /* ---- the results ---- */
 
@@ -148,7 +168,7 @@ export const SUB_HEIGHT = 16
 export const ROW_GAP = 2
 
 export interface TileLayout {
-  /** Tiles side by side: one under 360 px, then three (the grid's container query). */
+  /** Tiles side by side: one under 360 px, then two (the grid's container query). */
   columns: number
   /** One tile's width, null until measured. */
   tile: number | null
@@ -161,16 +181,16 @@ export interface TileLayout {
 
 export function tileLayout(width: number | null): TileLayout {
   if (width === null || width <= 0) return { columns: 1, tile: null, axes: false, plot: SPARK_HEIGHT, compact: true }
-  const columns = width < 360 ? 1 : 3
+  const columns = width < 360 ? 1 : 2
   const tile = Math.floor((width - DIVIDER * (columns - 1)) / columns)
   const axes = tile >= AXES_FROM
   return { columns, tile, axes, plot: axes ? AXES_HEIGHT : SPARK_HEIGHT, compact: columns === 1 }
 }
 
-/** How tall the three tiles stand in one column, in px: three rows and the two hairlines between. */
+/** How tall the two tiles stand in one column, in px: two rows and the hairline between. */
 export function columnHeight(layout: TileLayout): number {
   const row = 2 * PAD_Y + HEAD_HEIGHT + ROW_GAP + (layout.compact ? 0 : SUB_HEIGHT + ROW_GAP) + layout.plot
-  return 3 * row + 2 * DIVIDER
+  return 2 * row + DIVIDER
 }
 
 /** Which point a pointer `x` px across a plot `width` px wide is on: the nearest point of a line, the bar it is over. */
@@ -241,22 +261,16 @@ export const clip = (text: string, most = TIP_LINE_MAX): string => (text.length 
 
 export const clock = (ms: number): string => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
 
-export function queueTip(point: { at: number; running: number }, most: number): Tip {
+export function queueTip(point: QueuePoint, most: number): Tip {
   const free = most - point.running
-  return { value: `${point.running} / ${most} running`, detail: free > 0 ? `${free} more can start` : 'Full: new runs wait', note: clock(point.at) }
+  return {
+    value: point.waiting ? `${point.waiting} waiting` : 'None waiting',
+    detail: `${point.running} / ${most} running${point.waiting && free <= 0 ? ': full' : ''}`,
+    note: clock(point.at),
+  }
 }
 
 export function loadTip(point: Sample, machine: Pick<Machine, 'loadAbove'>): Tip {
   return { value: `Load ${point.load.toFixed(1)}`, detail: point.load > machine.loadAbove ? 'Holding new runs' : `Runs wait above ${machine.loadAbove.toFixed(1)}`, note: clock(point.at) }
 }
 
-/** A kind on a tooltip, capitalised: "Tests", "Build", "Task". */
-const kindWord = (kind: string): string => { const said = kindSaid(kind); return said.charAt(0).toUpperCase() + said.slice(1) }
-
-const ENDED: Record<Ended, string> = { passed: 'Passed', failed: 'Failed', cancelled: 'Cancelled' }
-
-export function resultTip(one: Result): Tip {
-  return { value: one.seconds ? `${ENDED[one.state]} in ${seconds(one.seconds)}` : one.state === 'cancelled' ? 'Cancelled before start' : ENDED[one.state], detail: clip(one.label), note: [one.kind ? kindWord(one.kind) : '', one.at ? clock(one.at) : ''].filter(Boolean).join(' · ') }
-}
-
-const seconds = (s: number): string => (s < 60 ? `${s} s` : s < 3600 ? `${Math.floor(s / 60)} min ${s % 60 ? `${s % 60} s` : ''}`.trim() : `${Math.floor(s / 3600)} h ${Math.round((s % 3600) / 60)} min`)
