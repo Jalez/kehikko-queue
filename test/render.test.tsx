@@ -53,6 +53,27 @@ const settle = () => act(async () => {
 })
 
 describe('the Queue page', () => {
+  test('says ready once the queue is drawn, hidden or not, and marks the scroller the kept view reads (protocol 2.70.0)', async () => {
+    let readied = 0
+    let answer: (overview: Overview) => void = () => {}
+    const api: Api = { ...fakeApi([]).api, runs: () => new Promise((done) => (answer = done)) }
+    render(<Screen host={host({ visible: false, ready: () => void readied++ })} api={api} now={() => 5000} />)
+    await settle()
+    expect(readied).toBe(0)
+    await act(async () => answer({ runs: [aRun({ id: 'p1', state: 'passed', exit: 0 })], machine }))
+    await settle()
+    expect(readied).toBe(1)
+    expect(document.querySelector('main[data-kehikot-scroll]')).not.toBeNull()
+  })
+
+  test('says ready when the queue could not be read, too', async () => {
+    let readied = 0
+    const api: Api = { ...fakeApi([]).api, runs: async () => Promise.reject(new Error('Queue did not answer.')) }
+    render(<Screen host={host({ ready: () => void readied++ })} api={api} now={() => 5000} />)
+    await settle()
+    expect(readied).toBe(1)
+  })
+
   test('lists waiting, running and finished runs with where each came from; its output is in a drawer, not inline', async () => {
     const runs = [
       aRun({ id: 'w1', state: 'queued', startedAt: null, finishedAt: null, exit: null, waiting: 'Next: waiting for one of the 2 running to finish (2 at once).', position: 1 }),

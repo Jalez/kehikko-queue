@@ -152,6 +152,16 @@ export function Screen({
     if (footerSaid) footer?.(JSON.parse(footerSaid))
   }, [footer, footerSaid])
 
+  /* The host's cover stays up until the page is drawn (protocol 2.70.0): said once the queue's first
+     read is drawn, what went wrong reading it, or the page's own cover for a server that is down or
+     stale. Never gated on `visible`: a page the host keeps hidden still says it is ready, or its
+     cover would wait out the hold. */
+  const drawn = overview !== null || said !== null || cover === 'down' || cover === 'stale'
+  const { ready } = host
+  useEffect(() => {
+    if (drawn) ready?.()
+  }, [ready, drawn])
+
   const waiting = runs.filter((run) => run.state === 'queued')
   const running = runs.filter((run) => run.state === 'running')
   const finished = runs.filter((run) => run.state !== 'queued' && run.state !== 'running')
@@ -165,7 +175,7 @@ export function Screen({
           <HeaderMenus items={items} onPress={onPress} />
         </header>
       ) : null}
-      <main className={`flex min-h-0 flex-1 flex-col overflow-auto ${level === 'glance' || level === 'list' ? 'gap-2 p-2' : 'gap-3 p-3'}`}>
+      <main data-kehikot-scroll className={`flex min-h-0 flex-1 flex-col overflow-auto ${level === 'glance' || level === 'list' ? 'gap-2 p-2' : 'gap-3 p-3'}`}>
         {cover ? (
           <Cover state={cover} name="Queue" onRetry={read} />
         ) : (

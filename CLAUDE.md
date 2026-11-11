@@ -75,6 +75,7 @@ what follows is how THIS repository is built, and the rules a change here keeps.
 bun test && bun run typecheck   # before every commit
 bun run check:door              # what the MCP door says about its tools
 bun run check:parts             # how the module follows the parts of an epic
+bun run check:rows              # the header and footer in kehikot.rows.json follow the rule
 bun run stub                    # look at it, framed, without Kehikot
 ```
 
