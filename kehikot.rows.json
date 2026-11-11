@@ -1,0 +1,132 @@
+[
+  {
+    "name": "reading the queue",
+    "state": true,
+    "header": [],
+    "footer": [
+      {
+        "kind": "text",
+        "id": "queue",
+        "text": "Reading the queue…",
+        "level": "normal",
+        "align": "start",
+        "optional": false
+      }
+    ]
+  },
+  {
+    "name": "nothing queued",
+    "state": true,
+    "header": [],
+    "footer": [
+      {
+        "kind": "text",
+        "id": "queue",
+        "text": "0 of 2 running · none waiting",
+        "level": "normal",
+        "align": "start",
+        "optional": false,
+        "tooltip": "0 of 2 running, none waiting."
+      },
+      {
+        "kind": "meter",
+        "id": "load",
+        "label": "Load",
+        "value": 0.35555555555555557,
+        "level": "normal",
+        "text": "3.2 / 9.0",
+        "align": "center",
+        "optional": false,
+        "tooltip": "Load 3.2 on 12 cores; new runs wait above 9.0."
+      }
+    ]
+  },
+  {
+    "name": "busy: running, waiting, results, a leased dev server",
+    "state": true,
+    "header": [],
+    "footer": [
+      {
+        "kind": "text",
+        "id": "queue",
+        "text": "1 of 2 running · 1 waiting",
+        "level": "normal",
+        "align": "start",
+        "optional": false,
+        "tooltip": "1 of 2 running, 1 waiting. In line: #1 pre-push monorepo — pre-push hook."
+      },
+      {
+        "kind": "text",
+        "id": "leases",
+        "text": "1 of 3 dev server",
+        "level": "normal",
+        "align": "start",
+        "optional": true,
+        "tooltip": "app: bun run dev on port 5281, leased by a shell"
+      },
+      {
+        "kind": "meter",
+        "id": "load",
+        "label": "Load",
+        "value": 0.35555555555555557,
+        "level": "normal",
+        "text": "3.2 / 9.0",
+        "align": "center",
+        "optional": false,
+        "tooltip": "Load 3.2 on 12 cores; new runs wait above 9.0."
+      },
+      {
+        "kind": "text",
+        "id": "results",
+        "text": "1 passed · 1 failed",
+        "level": "warn",
+        "align": "end",
+        "optional": true,
+        "tooltip": "The last 2: 1 passed, 1 failed. Latest: “pre-push monorepo” (push) failed."
+      }
+    ]
+  },
+  {
+    "name": "held: the load above the limit",
+    "state": true,
+    "header": [],
+    "footer": [
+      {
+        "kind": "text",
+        "id": "queue",
+        "text": "0 of 2 running · none waiting",
+        "level": "normal",
+        "align": "start",
+        "optional": false,
+        "tooltip": "0 of 2 running, none waiting."
+      },
+      {
+        "kind": "meter",
+        "id": "load",
+        "label": "Load",
+        "value": 1,
+        "level": "critical",
+        "text": "10.0 / 9.0 held",
+        "align": "center",
+        "optional": false,
+        "tooltip": "Load 10.0 on 12 cores; new runs wait above 9.0, so new runs are being held."
+      }
+    ]
+  },
+  {
+    "name": "the queue did not answer",
+    "state": true,
+    "header": [],
+    "footer": [
+      {
+        "kind": "text",
+        "id": "trouble",
+        "text": "The queue did not answer.",
+        "level": "critical",
+        "align": "start",
+        "optional": false,
+        "tooltip": "The queue did not answer."
+      }
+    ]
+  }
+]

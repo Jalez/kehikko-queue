@@ -318,9 +318,10 @@ describe('telling the session that asked (protocol 2.54.0)', () => {
     queuedAt: 0, startedAt: 10_000, finishedAt: 262_000, exit: 0, pid: null, overdue: false, expect: null, ...over,
   })
   test('one line from the run’s own fields', () => {
-    expect(noticeFor(ranRun())).toBe('Run "kehikko main" passed (exit 0) after 4 min 12 s — in /work/kehikko. Its output: queue_status or queue_wait with id r1.')
+    expect(noticeFor(ranRun())).toBe('Run "kehikko main" passed (exit 0) after 4 min 12 s — in kehikko. queue_wait r1')
     expect(noticeFor(ranRun({ state: 'failed', exit: 1, expect: 'fail' }))).toContain('failed (exit 1), as expected')
-    expect(noticeFor(ranRun({ state: 'cancelled', exit: null, startedAt: null, why: 'Cancelled by the person.' }))).toBe('Run "kehikko main" was cancelled — in /work/kehikko. Cancelled by the person. Its output: queue_status or queue_wait with id r1.')
+    expect(noticeFor(ranRun({ state: 'cancelled', exit: null, startedAt: null, why: 'Cancelled by the person.' }))).toBe('Run "kehikko main" was cancelled — in kehikko. Cancelled by the person. queue_wait r1')
+    expect(noticeFor(ranRun({ cwd: '/Users/me/Projects/kehikko/src' }))).toContain('— in kehikko/src.')
     expect(noticeFor(ranRun({ state: 'failed', why: 'x'.repeat(5000) })).length).toBeLessThanOrEqual(LIMITS.MESSAGE_BODY)
     expect(span(38_000)).toBe('38 s')
     expect(span(120_000)).toBe('2 min')

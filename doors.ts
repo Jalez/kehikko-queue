@@ -8,6 +8,7 @@ import {
   resolveDoorPlace,
   resolveDoorProject,
   settingsDoor,
+  shortPath,
   type HostHasProjectOptions,
   type Reply,
 } from 'kehikot-module-protocol/serve'
@@ -135,7 +136,8 @@ export function span(ms: number): string {
 
 /**
  * The one line the session that asked is told when its run ends: built only from the run's own
- * fields — label, outcome, exit code, how long, why — and how to read more with this module's tools.
+ * fields — label, outcome, exit code, how long, why — the folder's last meaningful segment (`shortPath`),
+ * and the tool call that reads its output (`queue_wait <id>`), so the notice stays one short line.
  */
 export function noticeFor(run: Pick<Run, 'id' | 'label' | 'state' | 'exit' | 'why' | 'expect' | 'startedAt' | 'finishedAt' | 'cwd'>): string {
   const outcome = run.state === 'passed' ? 'passed' : run.state === 'failed' ? 'failed' : 'was cancelled'
@@ -143,8 +145,8 @@ export function noticeFor(run: Pick<Run, 'id' | 'label' | 'state' | 'exit' | 'wh
   const expected = run.expect === 'fail' ? (run.state === 'failed' ? ', as expected' : run.state === 'passed' ? ', but it was expected to fail' : '') : ''
   const ran = run.startedAt !== null && run.finishedAt !== null ? ` after ${span(run.finishedAt - run.startedAt)}` : ''
   const why = run.why ? ` ${run.why}` : ''
-  const tail = ` Its output: queue_status or queue_wait with id ${run.id}.`
-  const head = `Run ${JSON.stringify(run.label)} ${outcome}${exit}${expected}${ran} — in ${run.cwd}.`
+  const tail = ` queue_wait ${run.id}`
+  const head = `Run ${JSON.stringify(run.label)} ${outcome}${exit}${expected}${ran} — in ${shortPath(run.cwd)}.`
   const room = LIMITS.MESSAGE_BODY - head.length - tail.length
   return `${head}${why.length > room ? `${why.slice(0, Math.max(0, room - 1))}…` : why}${tail}`
 }
