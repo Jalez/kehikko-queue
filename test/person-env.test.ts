@@ -3,6 +3,8 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, w
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 
+import { utf8Locale } from 'kehikot-module-protocol/serve'
+
 import { agentEnv } from '../doors.ts'
 import { shellSpawner } from '../queue/runner.ts'
 
@@ -28,7 +30,8 @@ describe('an agent’s run', () => {
         BUN_BE_BUN: '1',
         HOME: '/home/me',
       })
-      expect(env).toEqual({ PATH: [person, '/usr/bin', '/bin'].join(delimiter), HOME: '/home/me' })
+      /* With no locale named, the person's programs get a UTF-8 one (protocol 2.75.0). */
+      expect(env).toEqual({ PATH: [person, '/usr/bin', '/bin'].join(delimiter), HOME: '/home/me', LC_CTYPE: utf8Locale() })
       const log = join(scratch, 'log')
       const started = shellSpawner.start({ argv: ['/bin/sh', '-c', 'command -v bun; bun --version'], cwd: scratch, env, log, exit: join(scratch, 'exit') })
       expect(await started.exited).toBe(0)
