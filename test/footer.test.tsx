@@ -21,7 +21,7 @@ describe('the footer', () => {
       aRun({ id: 'p1', state: 'passed', exit: 0 }),
     ]
     const items = footerItems({ runs, machine, trouble: null })
-    expect(items.find((i) => i.id === 'queue')).toMatchObject({ kind: 'text', text: '1 of 2 running · 1 waiting' })
+    expect(items.find((i) => i.id === 'queue')).toMatchObject({ kind: 'text', text: '1 waiting · 1 running' })
     expect(items.find((i) => i.id === 'load')).toMatchObject({ kind: 'meter', label: 'Load', text: '3.2 / 9.0', level: 'normal' })
     expect(items.find((i) => i.id === 'results')).toMatchObject({ kind: 'text', text: '1 passed · 1 failed', level: 'warn', optional: true })
     expect(items.every((i) => i.kind === 'text' || i.kind === 'meter')).toBe(true)
@@ -39,7 +39,7 @@ describe('the footer', () => {
     const items = footerItems({ runs: [], machine: { ...machine, load: 10 }, trouble: null })
     expect(items.find((i) => i.id === 'load')).toMatchObject({ value: 1, level: 'critical', text: '10.0 / 9.0 held' })
     expect(items.some((i) => i.id === 'results')).toBe(false)
-    expect(items.find((i) => i.id === 'queue')).toMatchObject({ text: '0 of 2 running · none waiting' })
+    expect(items.find((i) => i.id === 'queue')).toMatchObject({ text: 'none waiting · 0 running' })
   })
 
   test('before the first read it says so; trouble is critical', () => {
@@ -78,7 +78,7 @@ describe('the page and the footer', () => {
     const said: unknown[][] = []
     render(<Screen host={host({ drawsFooter: true, footer: (items) => void said.push(items) })} api={api} now={() => 5000} />)
     await settle()
-    expect(said.at(-1)).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'queue', text: '0 of 2 running · none waiting' })]))
+    expect(said.at(-1)).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'queue', text: 'none waiting · 0 running' })]))
     cleanup()
     const none: unknown[][] = []
     render(<Screen host={host({ drawsFooter: false, footer: (items) => void none.push(items) })} api={api} now={() => 5000} />)

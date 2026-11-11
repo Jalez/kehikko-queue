@@ -18,10 +18,10 @@ Now each run waits in Queue and starts when there is room; whoever asked waits f
   (10 minutes) starts as soon as a slot is free, oldest first, so nothing waits forever.
 - **Who goes first.** A `push` (a pre-push hook a person is waiting on) before every other kind; first come first served within each. You can move a waiting run up, down or to the top,
   and cancel any run, on the page.
-- **At a glance.** The top of the page is three tiles, each a number in words and a small live chart:
-  the queue (running of the most at once, and waiting; the chart is the last 30 minutes), the strain
-  (the 1-minute load against the limit above which new runs wait; the last 5 minutes), and the latest
-  results (passed, failed; one bar per run, as tall as it ran; its tooltip says the run's kind). A short container shows only these.
+- **At a glance.** The top of the page is two tiles, each a number in words and a small live chart:
+  Waiting (how many runs are in line right now, with the running as a second, dashed line; the last
+  30 minutes) and Load (the 1-minute load against the limit above which new runs wait; the last
+  5 minutes). The latest results are in the footer and the list, not a chart. A short container shows only these.
 - **More as the container grows.** Narrow or short, one line per run, which opens its drawer (details,
   output, cancel). With room, each run's row with its kind, the jump into where it came from, its
   buttons and its output; roomier still, the session and epic it came from, the change or issue it is

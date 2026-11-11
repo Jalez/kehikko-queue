@@ -3,7 +3,7 @@ import { LIMITS, footerItemsSchema, type FooterItem } from 'kehikot-module-proto
 import type { RunView } from '../queue/queue.ts'
 import type { LeaseView } from '../queue/leases.ts'
 import { whoAsked } from '../queue/who.ts'
-import { counts, holding, queueNow, queueSaid, recentResults, resultsSaid, strainSaid } from './glance.ts'
+import { counts, holding, queueLine, queueNow, queueSaid, recentResults, resultsSaid, strainSaid } from './glance.ts'
 import type { Machine } from './wire/api.ts'
 
 /**
@@ -12,7 +12,7 @@ import type { Machine } from './wire/api.ts'
  * nothing (the scope is the person's, in the settings window); every item here is a readout, so
  * nothing is pressable.
  *
- * - the queue: running of the most at once, and waiting;
+ * - the queue: how many are waiting, and how many running (of the most at once, in its tooltip);
  * - the load against the limit above which new runs wait, a meter, critical while it holds runs;
  * - the latest results, in words, warn when one failed;
  * - what went wrong reading the queue, when it did.
@@ -49,7 +49,7 @@ export function footerItems({ runs, machine, trouble, leases = [] }: FooterState
   items.push({
     kind: 'text',
     id: 'queue',
-    text: `${now.running} of ${now.most} running · ${now.waiting ? `${now.waiting} waiting` : 'none waiting'}`,
+    text: queueLine(now),
     tooltip: cut(now.waiting ? `${queueSaid(now)} In line: ${lineSaid(runs)}.` : queueSaid(now), LIMITS.FOOTER_TOOLTIP),
   })
   const leased = leases.filter((lease) => lease.state === 'running')

@@ -43,10 +43,10 @@
       }
     },
     {
-      "title": "Queue, Load, Results, then every run",
-      "body": "The tiles say how many run of how many, the computer's load against the line above which new runs wait, and the latest passes and fails. Below them, Waiting, Running and Finished.",
+      "title": "Waiting, Load, then every run",
+      "body": "The tiles say how many are waiting in line and how many run, and the computer's load against the line above which new runs wait. Below them, Waiting, Running and Finished.",
       "art": {
-        "label": "Queue's three tiles at the top, the load nearing its dashed limit, and the runs grouped below",
+        "label": "Queue's two tiles at the top, the load nearing its dashed limit, and the runs grouped below",
         "shapes": [
           { "kind": "pane", "x": 20, "y": 4, "w": 280, "h": 142 },
           { "kind": "box", "x": 28, "y": 20, "w": 86, "h": 46, "round": 3, "tone": "card" },
