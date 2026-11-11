@@ -168,7 +168,7 @@ export function Screen({
   const leased = (overview?.leases ?? []).filter((lease) => lease.state === 'running')
 
   return (
-    <div ref={root} className="flex h-screen min-w-0 flex-col text-sm" data-level={level}>
+    <div data-kehikot-page ref={root} className="flex h-screen min-w-0 flex-col text-sm" data-level={level}>
       {host.where === 'unhosted' ? (
         <header className="flex min-h-9 shrink-0 items-center gap-2 border-b px-2">
           <span className="text-xs font-medium">Queue</span>
