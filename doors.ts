@@ -31,6 +31,7 @@ import { leaseSaid, Leases, rangeOf, TTL_DEFAULT_MS } from './queue/leases.ts'
 import { KIND_WORDS, LIMITED } from './queue/kinds.ts'
 import { guardSettingsOf, guardsFor } from './queue/guards.ts'
 import { checkFolder, preflightRefusal, wouldFail } from './queue/preflight.ts'
+import { servicesFor } from './queue/service.ts'
 
 /**
  * Every door but the page, as one function (`answer`), plus the queue they all share. The CLI's own
@@ -41,7 +42,8 @@ export const TICKET = mintTicket()
 export const BUILD = establishBuild({ version: VERSION, dir: import.meta.dirname })
 /* The guards (protocol 2.61.0) follow the person's settings; read here, and again when one changes. */
 const guardsNow = () => guardsFor(CLI, guardSettingsOf(readValues(queueDir())))
-export const MANIFEST: Manifest = manifestSchema.parse({ ...DECLARED, guards: guardsNow(), declares: { ...DECLARED.declares, skills: skillDeclarations() } })
+/* The services it provides (protocol 2.81.0): `work.queue`, with this install's CLI in its run lines. */
+export const MANIFEST: Manifest = manifestSchema.parse({ ...DECLARED, guards: guardsNow(), services: servicesFor(CLI), declares: { ...DECLARED.declares, skills: skillDeclarations() } })
 
 export function servingAt(origin: string): void {
   serveFrom(origin)

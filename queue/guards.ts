@@ -50,7 +50,7 @@ export function guardSettingsOf(values: Record<string, unknown>): GuardSettings 
   return { on: values.guards !== false, commands: listOf(values.guard_commands), scripts: listOf(values.guard_scripts), direct: listOf(values.guard_direct) }
 }
 
-const shellQuoted = (word: string): string => (/^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replaceAll("'", "'\\''")}'`)
+export const shellQuoted = (word: string): string => (/^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replaceAll("'", "'\\''")}'`)
 const unique = (list: readonly string[], most = 32) => [...new Set(list)].slice(0, most)
 
 /**
