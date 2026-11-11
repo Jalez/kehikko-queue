@@ -40,7 +40,7 @@ export function Glance({ runs, machine, now, width }: { runs: readonly RunView[]
   return (
     /* No cards: the grid's 1 px gap shows the border colour between tiles, which stand on the page's own background. */
     <div ref={row} className="bg-border grid min-w-0 shrink-0 grid-cols-1 gap-px @min-[360px]:grid-cols-2" data-testid="glance" data-axes={layout.axes} data-compact={layout.compact}>
-      <Tile layout={layout} title="Waiting" value={queue.waiting ? `${queue.waiting} waiting` : 'none waiting'} sub={`${queue.running}/${queue.most} running`} testId="tile-queue">
+      <Tile layout={layout} title="Waiting" label="Runs waiting in the queue" value={queue.waiting ? `${queue.waiting} waiting` : 'none waiting'} sub={`${queue.running}/${queue.most} running`} testId="tile-queue">
         <Plot said={queueSaid(queue)} count={over.length} kind="line" height={layout.plot} tip={(i) => queueTip(over[i]!, queue.most)} testId="tile-queue">
           {(active) => (
             <AreaPlot data={over} dataKey="waiting" also="running" config={QUEUE} axes={layout.axes} active={active} top={top} limit={null} step format={(v) => String(v)} />
@@ -135,14 +135,14 @@ function AreaPlot<T extends { at: number }>({
  * one row, the plot directly under it; side by side the words go on a line under the title. Nothing
  * overlays the plot but the tooltip, which sits outside it.
  */
-function Tile({ layout, title, value, sub, subTone, testId, children }: { layout: TileLayout; title: string; value: string; sub: string; subTone?: string; testId: string; children: React.ReactNode }) {
+function Tile({ layout, title, label, value, sub, subTone, testId, children }: { layout: TileLayout; title: string; /** What a screen reader calls the tile, when its title alone would be taken for the list's section of the same name. */ label?: string; value: string; sub: string; subTone?: string; testId: string; children: React.ReactNode }) {
   const words = (
     <p className={`min-w-0 truncate text-[11px] ${subTone ?? 'text-muted-foreground'} ${layout.compact ? 'flex-1' : ''}`} style={{ lineHeight: `${layout.compact ? HEAD_HEIGHT : SUB_HEIGHT}px` }} title={sub}>
       {sub}
     </p>
   )
   return (
-    <section aria-label={title} className="bg-background flex min-w-0 flex-col" style={{ padding: `${PAD_Y}px ${PAD_X}px`, rowGap: ROW_GAP }} data-testid={testId}>
+    <section aria-label={label ?? title} className="bg-background flex min-w-0 flex-col" style={{ padding: `${PAD_Y}px ${PAD_X}px`, rowGap: ROW_GAP }} data-testid={testId}>
       <div className="flex min-w-0 items-baseline justify-between gap-2" style={{ height: HEAD_HEIGHT, lineHeight: `${HEAD_HEIGHT}px` }} data-testid={`${testId}-head`}>
         <h2 className="text-muted-foreground shrink-0 text-[10px] font-medium tracking-wide uppercase">{title}</h2>
         {layout.compact ? words : null}
