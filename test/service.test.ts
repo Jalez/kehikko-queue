@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { WORK_QUEUE, providerOf, serviceDescriptor, workQueueSaid, workQueueSchema } from 'kehikot-module-protocol'
+import { WORK_QUEUE, providerOf, serviceDescriptor, wantsQueued, workQueueSaid, workQueueSchema, workWant } from 'kehikot-module-protocol'
 
 import { MANIFEST } from '../doors.ts'
 import { CLI } from '../skills.ts'
@@ -22,6 +22,18 @@ describe('the work.queue service', () => {
     expect(queue.run.install).toContain('--kind task -- {command}')
     expect(queue.marks).toContain(WRAPPER)
     expect(queue.tool).toBe('queue_run')
+  })
+
+  test('what it wants queued: whole test suites at 50% for 15 s, typechecks and builds at 80% for 10 s, installs never', () => {
+    const queue = serviceDescriptor(WORK_QUEUE, workQueueFor('/q/bin/kehikot-queue'))!
+    expect(workWant(queue, 'test')).toEqual({ minCpu: 50, sustainedSeconds: 15, wholeSuiteOnly: true })
+    expect(workWant(queue, 'typecheck')).toEqual({ minCpu: 80, sustainedSeconds: 10, wholeSuiteOnly: false })
+    expect(workWant(queue, 'build')).toEqual({ minCpu: 80, sustainedSeconds: 10, wholeSuiteOnly: false })
+    expect(workWant(queue, 'install')).toBeNull()
+    expect(wantsQueued(queue, { kind: 'test', command: 'bun test test/a.test.tsx test/b.test.tsx', cpu: 68, seconds: 60 })).toBe(false)
+    expect(wantsQueued(queue, { kind: 'test', command: 'bun test', cpu: 68, seconds: 15 })).toBe(true)
+    expect(wantsQueued(queue, { kind: 'typecheck', command: 'tsc --noEmit', cpu: 145, seconds: 10 })).toBe(true)
+    expect(wantsQueued(queue, { kind: 'install', command: 'bun install', cpu: 1, seconds: 60 })).toBe(false)
   })
 
   test('what a consumer would say, read through a services.find answer', () => {
