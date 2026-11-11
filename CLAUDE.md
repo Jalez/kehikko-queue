@@ -23,6 +23,7 @@ what follows is how THIS repository is built, and the rules a change here keeps.
 | `src/app.tsx`, `src/inbox.ts`, `src/header.ts` | The page, the Inbox items, the header switch. |
 | `src/glance.ts`, `src/components/glance.tsx`, `src/use-box.ts` | What the page says at a glance and how much more it shows at each container size (`levelOf`, pure); the two tiles (Waiting, Load) and their charts (shadcn's chart, `src/components/ui/chart.tsx`); the container's measured size. |
 | `queue/guards.ts`, `bin/guard-plan.ts` | The guards the manifest declares (protocol 2.61.0) from the settings; what `--guard` does with a rewritten command in its project (heavy → queued as its kind, light → at once). |
+| `queue/service.ts` | The `work.queue` service it provides (protocol 2.81.0, `services` in the served manifest): its run line per kind of work, its CLI, `queue_run`, the direct escape and the marks of its own runs. What a consumer says about the queue is built from this alone. |
 | `queue/leases.ts` | Dev-server leases: a free port, the server in its own group, stopped by pid on release, TTL, holder or session gone. |
 | `queue/kinds.ts`, `queue/who.ts` | The kinds, their other words and their per-kind limits (`LIMITED`, `LIMIT_DEFAULTS`); who asked, in a few words. Pure. |
 | `queue/preflight.ts` | Is the folder ready, when a run is asked for: the asker's `preflight`, the mise trust and `node_modules` checks, and the signature of a fast failure. |
