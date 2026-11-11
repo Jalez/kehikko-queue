@@ -22,11 +22,11 @@
       {
         "kind": "text",
         "id": "queue",
-        "text": "0 of 2 running · none waiting",
+        "text": "none waiting · 0 running",
         "level": "normal",
         "align": "start",
         "optional": false,
-        "tooltip": "0 of 2 running, none waiting."
+        "tooltip": "none waiting, 0 of 2 running."
       },
       {
         "kind": "meter",
@@ -49,11 +49,11 @@
       {
         "kind": "text",
         "id": "queue",
-        "text": "1 of 2 running · 1 waiting",
+        "text": "1 waiting · 1 running",
         "level": "normal",
         "align": "start",
         "optional": false,
-        "tooltip": "1 of 2 running, 1 waiting. In line: #1 pre-push monorepo — pre-push hook."
+        "tooltip": "1 waiting, 1 of 2 running. In line: #1 pre-push monorepo — pre-push hook."
       },
       {
         "kind": "text",
@@ -94,11 +94,11 @@
       {
         "kind": "text",
         "id": "queue",
-        "text": "0 of 2 running · none waiting",
+        "text": "none waiting · 0 running",
         "level": "normal",
         "align": "start",
         "optional": false,
-        "tooltip": "0 of 2 running, none waiting."
+        "tooltip": "none waiting, 0 of 2 running."
       },
       {
         "kind": "meter",
