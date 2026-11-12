@@ -1,5 +1,3 @@
-import { availableParallelism } from 'node:os'
-
 import { settingsDeclarationSchema, type SettingField } from 'kehikot-module-protocol'
 
 import { LIMIT_DEFAULTS } from './kinds.ts'
@@ -27,6 +25,7 @@ import { autoLoad, loadText, LOAD_KEY, MOST_KEY } from './load.ts'
  * Kept on this machine (`scope: 'machine'`): it is about this computer's cores, not a project. Only
  * the person changes it (`personOnly`), because it decides when commands run.
  */
+/* Pure, like everything the page can import (manifest.ts is one): the core count is the server's to read (settings.ts) and is handed in. */
 export const settingsFor = (cores: number): SettingField[] => settingsDeclarationSchema.parse([
   {
     key: MOST_KEY,
@@ -110,7 +109,4 @@ export const settingsFor = (cores: number): SettingField[] => settingsDeclaratio
     personOnly: true,
   },
 ])
-
-/** This computer's settings. */
-export const SETTINGS: SettingField[] = settingsFor(availableParallelism())
 

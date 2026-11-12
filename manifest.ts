@@ -4,7 +4,6 @@ import pkg from './package.json'
 /* This module's introduction (protocol 2.57.0): slides the host shows in its introduction dialog. Also
    read as a file from the repository, so a person can watch it before the module runs or is installed. */
 import intro from './intro.json'
-import { SETTINGS } from './queue/fields.ts'
 
 /** "How to use" (protocol 2.52.0). Each string one line of plain text. */
 export const HELP = {
@@ -73,7 +72,7 @@ export const PREFERRED_PORT = 8110
  * What this module says about itself, parsed when imported: a manifest no host
  * would accept fails here, in a test, rather than on somebody's canvas.
  *
- * What is served (`MANIFEST` in doors.ts) is this with `declares.skills` added,
+ * What is served (`MANIFEST` in doors.ts) is this with `declares.settings` and `declares.skills` added (the page imports this file, so nothing here may read this computer: no `node:` module),
  * because a skill's version follows the origin the process really serves on.
  */
 export const DECLARED: Manifest = manifestSchema.parse({
@@ -135,7 +134,6 @@ export const DECLARED: Manifest = manifestSchema.parse({
     /* True because this module takes writes (cancel, move): its page is framed on its real origin. */
     storage: true,
     prompt: false,
-    settings: SETTINGS,
   },
   health: '/healthz',
 })

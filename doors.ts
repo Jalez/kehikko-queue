@@ -45,7 +45,7 @@ migrateValues(queueDir(), cores())
 /* The guards (protocol 2.61.0) follow the person's settings; read here, and again when one changes. */
 const guardsNow = () => guardsFor(CLI, guardSettingsOf(valuesOf(queueDir())))
 /* The services it provides (protocol 2.81.0): `work.queue`, with this install's CLI in its run lines. */
-export const MANIFEST: Manifest = manifestSchema.parse({ ...DECLARED, guards: guardsNow(), services: servicesFor(CLI), declares: { ...DECLARED.declares, skills: skillDeclarations() } })
+export const MANIFEST: Manifest = manifestSchema.parse({ ...DECLARED, guards: guardsNow(), services: servicesFor(CLI), declares: { ...DECLARED.declares, settings: SETTINGS, skills: skillDeclarations() } })
 
 export function servingAt(origin: string): void {
   serveFrom(origin)

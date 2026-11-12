@@ -4,9 +4,7 @@ import { join } from 'node:path'
 
 import { defaultCapacity, type Capacity } from './schedule.ts'
 import { LIMIT_DEFAULTS, LIMITED, type Limited } from './kinds.ts'
-import { autoLoad, kindKey, LEASES_DEFAULT, LOAD_KEY } from './fields.ts'
-
-export { SETTINGS } from './fields.ts'
+import { autoLoad, kindKey, LEASES_DEFAULT, LOAD_KEY, settingsFor } from './fields.ts'
 
 const KIND_KEYS = LIMITED.map(kindKey)
 
@@ -112,4 +110,6 @@ export function leasesOf(values: Record<string, unknown>): number {
 }
 
 export const cores = () => availableParallelism()
+/** This computer's settings: read the cores here, on the server, never in a file the page imports. */
+export const SETTINGS = settingsFor(cores())
 export const loadNow = () => loadavg()[0] ?? 0
