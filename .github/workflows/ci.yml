@@ -1,5 +1,5 @@
-# Typecheck, build the page and test every push to main and every pull request: the same two
-# checks the release workflow runs before it publishes anything.
+# Check the module on every push to main and every pull request: the shared
+# workflow (version against its kind, install, typecheck, test, build).
 name: ci
 
 on:
@@ -7,14 +7,23 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
-  test:
+  ci:
+    uses: Jalez/kehikko-desktop/.github/workflows/module-ci.yml@main
+
+  # The check the shared workflow does not run.
+  rows:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: oven-sh/setup-bun@v2
+      - run: |
+          git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+          git config --global --add url."https://github.com/".insteadOf "git@github.com:"
       - run: bun install --frozen-lockfile
-      - run: bun run typecheck
-      - run: bun run build
-      - run: bun run test
       - run: bun run check:rows
