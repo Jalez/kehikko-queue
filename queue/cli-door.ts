@@ -177,7 +177,7 @@ export function cliDoor(options: CliDoorOptions): Before {
         ...whoOf(body),
       }
       const epic = epicOf(body.epic) ?? place?.epic ?? null
-      const origin = place ? originFromPlace(place, cwd.value) : await originFromCwd(cwd.value, epic, options.ask?.() ?? {})
+      const origin = place ? await originFromPlace(place, cwd.value) : await originFromCwd(cwd.value, epic, options.ask?.() ?? {})
       const run = q.enqueue({
         argv: argv.value,
         cwd: cwd.value,

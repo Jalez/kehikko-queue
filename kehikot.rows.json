@@ -34,10 +34,10 @@
         "label": "Load",
         "value": 0.35555555555555557,
         "level": "normal",
-        "text": "3.2 / 9.0",
+        "text": "3.2 / 9",
         "align": "center",
         "optional": false,
-        "tooltip": "Load 3.2 on 12 cores; new runs wait above 9.0."
+        "tooltip": "Load 3.2. Pause new runs when the load is above 9 (of 12 cores)."
       }
     ]
   },
@@ -70,10 +70,10 @@
         "label": "Load",
         "value": 0.35555555555555557,
         "level": "normal",
-        "text": "3.2 / 9.0",
+        "text": "3.2 / 9",
         "align": "center",
         "optional": false,
-        "tooltip": "Load 3.2 on 12 cores; new runs wait above 9.0."
+        "tooltip": "Load 3.2. Pause new runs when the load is above 9 (of 12 cores)."
       },
       {
         "kind": "text",
@@ -106,10 +106,10 @@
         "label": "Load",
         "value": 1,
         "level": "critical",
-        "text": "10.0 / 9.0 held",
+        "text": "10 / 9 held",
         "align": "center",
         "optional": false,
-        "tooltip": "Load 10.0 on 12 cores; new runs wait above 9.0, so new runs are being held."
+        "tooltip": "Load 10. Pause new runs when the load is above 9 (of 12 cores), so new runs are being held."
       }
     ]
   },

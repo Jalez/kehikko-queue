@@ -20,7 +20,29 @@ import { indexAt, PAD_X, stepped, TIP_GAP, tipAlign, tipSide, type Tip } from '@
  *
  * The plot runs through the tile's padding, edge to edge.
  */
-export function Plot({ said, count, kind, height, tip, testId, children }: { said: string; count: number; kind: 'line' | 'bar'; height: number; tip: (index: number) => Tip; testId: string; children: (active: number | null) => ReactNode }) {
+export function Plot({
+  said,
+  count,
+  kind,
+  height,
+  tip,
+  testId,
+  hint,
+  onOpen,
+  children,
+}: {
+  said: string
+  count: number
+  kind: 'line' | 'bar'
+  height: number
+  tip: (index: number) => Tip
+  testId: string
+  /** What pressing the chart does, said as the tooltip's last line and in its label: "Change the load limit…". */
+  hint?: string
+  /** Pressing the chart (a click, a tap, Enter or Space on it) opens the setting it is about. */
+  onOpen?: () => void
+  children: (active: number | null) => ReactNode
+}) {
   const id = useId()
   const box = useRef<HTMLDivElement>(null)
   const tipBox = useRef<HTMLDivElement>(null)
@@ -46,6 +68,12 @@ export function Plot({ said, count, kind, height, tip, testId, children }: { sai
     else showTip(tipKey, event.currentTarget, { touch: event.pointerType === 'touch' })
   }
   const key = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (onOpen && (event.key === 'Enter' || event.key === ' ')) {
+      event.preventDefault()
+      hideTip(tipKey)
+      onOpen()
+      return
+    }
     const next = stepped(event.key, shown, count)
     if (next === undefined) return
     event.preventDefault()
@@ -63,10 +91,20 @@ export function Plot({ said, count, kind, height, tip, testId, children }: { sai
     <div ref={box} className="relative min-w-0" style={{ height, marginInline: -PAD_X }} data-testid={`${testId}-plot`} data-kind={kind}>
       <div
         role="img"
-        aria-label={said}
+        aria-label={hint ? `${said} ${hint}` : said}
+        title={hint && !count ? hint : undefined}
+        data-opens={onOpen ? '' : undefined}
         aria-describedby={told ? `${id}-tip` : undefined}
-        tabIndex={count ? 0 : -1}
-        className="focus-visible:ring-ring size-full touch-pan-y rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-inset"
+        tabIndex={count || onOpen ? 0 : -1}
+        className={`focus-visible:ring-ring size-full touch-pan-y rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-inset ${onOpen ? 'cursor-pointer' : ''}`}
+        onClick={
+          onOpen
+            ? () => {
+                hideTip(tipKey)
+                onOpen()
+              }
+            : undefined
+        }
         onFocus={(event) => {
           if (!count || !fromKeyboard()) return
           setActive((was) => was ?? count - 1)
@@ -105,6 +143,11 @@ export function Plot({ said, count, kind, height, tip, testId, children }: { sai
             <span className="block font-semibold tabular-nums">{told.value}</span>
             {told.detail ? <span className="block">{told.detail}</span> : null}
             {told.note ? <span className="text-muted-foreground block tabular-nums">{told.note}</span> : null}
+            {hint ? (
+              <span className="text-muted-foreground mt-0.5 block border-t pt-0.5" data-testid={`${testId}-hint`}>
+                {hint}
+              </span>
+            ) : null}
           </>
         ) : null}
       </div>

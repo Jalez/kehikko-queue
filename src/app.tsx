@@ -1,7 +1,7 @@
 import { ArrowDown, ArrowUp, Check, ChevronsUp, CircleCheck, CircleDashed, CircleSlash, CircleX, Copy, LoaderCircle, SquareArrowOutUpRight, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-import { navigationResult, type HeaderItem, type PressValue } from 'kehikot-module-protocol'
+import { navigationResult, settingsOpenResult, type HeaderItem, type PressValue } from 'kehikot-module-protocol'
 import { Cover, coverFor, useServerStanding } from 'kehikot-module-protocol/client/react'
 
 import { Glance } from '@/components/glance'
@@ -19,6 +19,7 @@ import { useKehikot, type Host } from '@/wire/use-kehikot'
 
 import { jumpFor, originOf, type GotoParams } from '../queue/origin.ts'
 import { kindSaid } from '../queue/kinds.ts'
+import { loadText } from '../queue/load.ts'
 import type { RunView } from '../queue/queue.ts'
 import type { LeaseView } from '../queue/leases.ts'
 import { askedSaid, whoAsked } from '../queue/who.ts'
@@ -28,6 +29,9 @@ type Press = { item: string; value?: PressValue }
 
 /** An Inbox item the person opened (`kehikot.opened`, protocol 2.35.0); `n` tells two opens of one item apart. */
 export type OpenedItem = { item: string; n: number }
+
+/** Where the settings are, when the host could not open them (one before protocol 2.90.0). */
+export const SETTINGS_WHERE = 'Change it in Kehikot’s Settings › Modules › Queue.'
 
 /** The page: the queue as last read, at the container's scope (protocol 2.29.0). */
 export function App() {
@@ -75,6 +79,19 @@ export function Screen({
   /* The run whose output the drawer shows: one at a time, by id. */
   const [open, setOpen] = useState<string | null>(null)
   const [jumpSaid, setJumpSaid] = useState<string | null>(null)
+  /* A chart pressed: the host opens Queue's settings at the setting it draws (`settings.open`, protocol 2.90.0). */
+  const openSetting = useCallback(
+    async (key: string) => {
+      try {
+        const got = settingsOpenResult.safeParse(await host.request('settings.open', { key }))
+        if (got.success && got.data.outcome === 'opened') setJumpSaid(null)
+        else setJumpSaid(got.success && got.data.why ? got.data.why : SETTINGS_WHERE)
+      } catch {
+        setJumpSaid(SETTINGS_WHERE)
+      }
+    },
+    [host],
+  )
   const partName = useCallback((id: string) => host.parts.find((part) => part.id === id)?.heading || id, [host.parts])
   const jump = (run: RunView) => <JumpButton run={run} host={host} partName={partName} onSaid={setJumpSaid} />
 
@@ -180,7 +197,7 @@ export function Screen({
           <Cover state={cover} name="Queue" onRetry={read} />
         ) : (
           <>
-            {overview ? <Glance runs={runs} machine={overview.machine} now={now()} width={given ? given.width - (level === 'glance' || level === 'list' ? 16 : 24) : undefined} /> : null}
+            {overview ? <Glance runs={runs} machine={overview.machine} now={now()} onOpen={(key) => void openSetting(key)} width={given ? given.width - (level === 'glance' || level === 'list' ? 16 : 24) : undefined} /> : null}
             {overview && level === 'full' ? <MachineLine overview={overview} /> : null}
             {jumpSaid ? (
               <p className="text-muted-foreground text-xs" role="status" data-testid="jump-said">
@@ -241,7 +258,7 @@ function MachineLine({ overview }: { overview: Overview }) {
   const { machine } = overview
   return (
     <p className="text-muted-foreground text-xs" data-testid="machine">
-      {machine.cores} cores · load {machine.load.toFixed(1)} · at most {machine.most} at once{perKindSaid(machine.perKind)} · nothing new above load {machine.loadAbove.toFixed(1)}, except after {machine.waitMinutes} min waiting · change in Kehikot’s Settings › Modules
+      {machine.cores} cores · load {loadText(machine.load)} · at most {machine.most} at once{perKindSaid(machine.perKind)} · nothing new above load {loadText(machine.loadAbove)}, except after {machine.waitMinutes} min waiting · change in Kehikot’s Settings › Modules
     </p>
   )
 }

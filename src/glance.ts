@@ -1,4 +1,5 @@
 import { kindSaid } from '../queue/kinds.ts'
+import { loadLimitSaid, loadText } from '../queue/load.ts'
 import type { RunView } from '../queue/queue.ts'
 import type { Machine, Sample } from './wire/api.ts'
 
@@ -89,13 +90,19 @@ export function queueSaid(now: QueueNow): string {
 export const holding = (machine: Pick<Machine, 'load' | 'loadAbove'>): boolean => machine.load > machine.loadAbove
 
 export function strainSaid(machine: Pick<Machine, 'load' | 'loadAbove' | 'cores'>, samples: readonly Sample[]): string {
-  const now = `Load ${machine.load.toFixed(1)} on ${machine.cores} cores; new runs wait above ${machine.loadAbove.toFixed(1)}`
+  const now = `Load ${loadText(machine.load)}. ${loadLimitSaid(machine.loadAbove, machine.cores)}`
   const held = holding(machine) ? ', so new runs are being held' : ''
   if (samples.length < 2) return `${now}${held}.`
   const loads = samples.map((one) => one.load)
   const minutes = Math.max(1, Math.round((samples.at(-1)!.at - samples[0]!.at) / 60_000))
-  return `${now}${held}. Over the last ${minutes} min it went from ${Math.min(...loads).toFixed(1)} to ${Math.max(...loads).toFixed(1)}.`
+  return `${now}${held}. Over the last ${minutes} min it went from ${loadText(Math.min(...loads))} to ${loadText(Math.max(...loads))}.`
 }
+
+/** The Load tile's number and the footer meter's text: "6.3 / 9", the load against its limit, in one unit. */
+export const loadAgainst = (machine: Pick<Machine, 'load' | 'loadAbove'>): string => `${loadText(machine.load)} / ${loadText(machine.loadAbove)}`
+
+/** What pressing a chart says it does, as its tooltip's last line and its label's end. */
+export const CHART_HINTS = { load: 'Change the load limit…', queue: 'Change runs at once…' } as const
 
 /** The queue's footer text and its tile's words: "2 waiting · 1 running". */
 export const queueLine = (now: Pick<QueueNow, 'running' | 'waiting'>): string => `${now.waiting ? `${now.waiting} waiting` : 'none waiting'} · ${now.running} running`
@@ -271,6 +278,6 @@ export function queueTip(point: QueuePoint, most: number): Tip {
 }
 
 export function loadTip(point: Sample, machine: Pick<Machine, 'loadAbove'>): Tip {
-  return { value: `Load ${point.load.toFixed(1)}`, detail: point.load > machine.loadAbove ? 'Holding new runs' : `Runs wait above ${machine.loadAbove.toFixed(1)}`, note: clock(point.at) }
+  return { value: `Load ${loadText(point.load)}`, detail: point.load > machine.loadAbove ? 'Holding new runs' : `Paused above ${loadText(machine.loadAbove)}`, note: clock(point.at) }
 }
 

@@ -1,3 +1,5 @@
+import { availableParallelism } from 'node:os'
+
 import { settingsDeclarationSchema, type SettingField } from 'kehikot-module-protocol'
 
 import { LIMIT_DEFAULTS } from './kinds.ts'
@@ -17,14 +19,17 @@ const KIND_FIELDS: Array<{ kind: keyof typeof LIMIT_DEFAULTS; label: string; wha
 /** How many dev servers may be leased at once, before the person says otherwise. */
 export const LEASES_DEFAULT = 3
 
+export { autoLoad, loadLimitSaid, loadText, LOAD_KEY, MOST_KEY } from './load.ts'
+import { autoLoad, loadText, LOAD_KEY, MOST_KEY } from './load.ts'
+
 /**
  * How much may run at once, as the person sets it in Kehikot's Settings › Modules (protocol 2.15.0).
  * Kept on this machine (`scope: 'machine'`): it is about this computer's cores, not a project. Only
  * the person changes it (`personOnly`), because it decides when commands run.
  */
-export const SETTINGS: SettingField[] = settingsDeclarationSchema.parse([
+export const settingsFor = (cores: number): SettingField[] => settingsDeclarationSchema.parse([
   {
-    key: 'most',
+    key: MOST_KEY,
     label: 'Runs at once',
     description: 'How many runs (tests, builds, other heavy commands) may run at the same time. 0 lets Queue decide: one for every six cores.',
     type: 'number',
@@ -33,11 +38,11 @@ export const SETTINGS: SettingField[] = settingsDeclarationSchema.parse([
     personOnly: true,
   },
   {
-    key: 'load',
-    label: 'Busy above (load per core)',
-    description: 'No new run starts while the machine\'s 1-minute load is above this many per core. 0.75 on 12 cores is 9.',
+    key: LOAD_KEY,
+    label: 'Pause new runs above load',
+    description: `New runs wait while this computer's load is above this number: its 1-minute load average, the number and the dashed line on Queue's Load chart. It has ${cores} cores, so a load of ${cores} keeps every core busy. 0 lets Queue decide: ${loadText(autoLoad(cores))} here.`,
     type: 'number',
-    default: 0.75,
+    default: 0,
     scope: 'machine',
     personOnly: true,
   },
@@ -105,4 +110,7 @@ export const SETTINGS: SettingField[] = settingsDeclarationSchema.parse([
     personOnly: true,
   },
 ])
+
+/** This computer's settings. */
+export const SETTINGS: SettingField[] = settingsFor(availableParallelism())
 

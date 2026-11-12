@@ -3,7 +3,7 @@ import { LIMITS, footerItemsSchema, type FooterItem } from 'kehikot-module-proto
 import type { RunView } from '../queue/queue.ts'
 import type { LeaseView } from '../queue/leases.ts'
 import { whoAsked } from '../queue/who.ts'
-import { counts, holding, queueLine, queueNow, queueSaid, recentResults, resultsSaid, strainSaid } from './glance.ts'
+import { counts, holding, loadAgainst, queueLine, queueNow, queueSaid, recentResults, resultsSaid, strainSaid } from './glance.ts'
 import type { Machine } from './wire/api.ts'
 
 /**
@@ -69,7 +69,7 @@ export function footerItems({ runs, machine, trouble, leases = [] }: FooterState
     id: 'load',
     label: 'Load',
     value: share,
-    text: cut(`${machine.load.toFixed(1)} / ${machine.loadAbove.toFixed(1)}${held ? ' held' : ''}`, LIMITS.FOOTER_METER_TEXT),
+    text: cut(`${loadAgainst(machine)}${held ? ' held' : ''}`, LIMITS.FOOTER_METER_TEXT),
     level: held ? 'critical' : share >= 0.8 ? 'warn' : 'normal',
     align: 'center',
     tooltip: cut(strainSaid(machine, machine.samples ?? []), LIMITS.FOOTER_TOOLTIP),
