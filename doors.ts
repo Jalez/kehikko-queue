@@ -26,7 +26,7 @@ import { cliToken, logsDir, queueDir } from './queue/machine.ts'
 import { askedSaid } from './queue/who.ts'
 import { ended, Queue, RUN_KINDS, type Asker, type Run, type RunView } from './queue/queue.ts'
 import { minutes, type Move } from './queue/schedule.ts'
-import { SETTINGS, capacityOf, cores, leasesOf, loadNow, readValues, writeValue } from './queue/settings.ts'
+import { SETTINGS, capacityOf, cores, leasesOf, loadNow, migrateValues, valuesOf, writeValue } from './queue/settings.ts'
 import { leaseSaid, Leases, rangeOf, TTL_DEFAULT_MS } from './queue/leases.ts'
 import { KIND_WORDS, LIMITED } from './queue/kinds.ts'
 import { guardSettingsOf, guardsFor } from './queue/guards.ts'
@@ -40,8 +40,10 @@ import { servicesFor } from './queue/service.ts'
 
 export const TICKET = mintTicket()
 export const BUILD = establishBuild({ version: VERSION, dir: import.meta.dirname })
+/* A load limit kept per core before 0.20.3 becomes the load itself, before anything reads it (`migrateValues`). */
+migrateValues(queueDir(), cores())
 /* The guards (protocol 2.61.0) follow the person's settings; read here, and again when one changes. */
-const guardsNow = () => guardsFor(CLI, guardSettingsOf(readValues(queueDir())))
+const guardsNow = () => guardsFor(CLI, guardSettingsOf(valuesOf(queueDir())))
 /* The services it provides (protocol 2.81.0): `work.queue`, with this install's CLI in its run lines. */
 export const MANIFEST: Manifest = manifestSchema.parse({ ...DECLARED, guards: guardsNow(), services: servicesFor(CLI), declares: { ...DECLARED.declares, skills: skillDeclarations() } })
 
@@ -85,7 +87,7 @@ export function queue(): Queue {
   if (!held) cliToken(DIR)
   held ??= new Queue({
     dir: DIR,
-    capacity: () => capacityOf(readValues(DIR), cores()),
+    capacity: () => capacityOf(valuesOf(DIR), cores()),
     load: loadNow,
     publish: (project, runs) => {
       publish(project, runs)
@@ -102,7 +104,7 @@ let leasesHeld: Leases | null = null
 let leaseTimer: ReturnType<typeof setInterval> | null = null
 export function leases(): Leases {
   if (!leasesHeld) {
-    leasesHeld = new Leases({ dir: DIR, most: () => leasesOf(readValues(DIR)), changed: runsChanged })
+    leasesHeld = new Leases({ dir: DIR, most: () => leasesOf(valuesOf(DIR)), changed: runsChanged })
     leaseTimer = setInterval(() => leasesHeld?.tick(), 5000)
     leaseTimer.unref?.()
   }
@@ -419,11 +421,11 @@ async function call(name: string, args: Record<string, unknown>, query: URLSearc
     const waiting = all.filter((run) => run.state === 'queued')
     const running = all.filter((run) => run.state === 'running')
     const finished = all.filter((run) => ended(run.state)).slice(0, 15)
-    const cap = capacityOf(readValues(DIR), cores())
+    const cap = capacityOf(valuesOf(DIR), cores())
     const head = `This computer: ${cores()} cores, 1-minute load ${loadNow().toFixed(1)}. At most ${cap.most} at once (${limitsSaid(cap.perKind)}); nothing new starts above load ${cap.loadAbove.toFixed(1)} until a run has waited ${minutes(cap.waitMs)}.`
     const part = (title: string, runs: RunView[]) => `${title} (${runs.length}):${runs.length ? `\n${runs.map(runSaid).join('\n')}` : ' none.'}`
     const leased = leases().list().filter((one) => one.state === 'running')
-    const servers = `Dev servers (${leased.length} of ${leasesOf(readValues(DIR))}):${leased.length ? `\n${leased.map((one) => leaseSaid(one)).join('\n')}` : ' none.'}`
+    const servers = `Dev servers (${leased.length} of ${leasesOf(valuesOf(DIR))}):${leased.length ? `\n${leased.map((one) => leaseSaid(one)).join('\n')}` : ' none.'}`
     return [head, part('Waiting', waiting), part('Running', running), servers, part('Finished lately', finished)].join('\n\n')
   }
 
@@ -495,7 +497,7 @@ async function call(name: string, args: Record<string, unknown>, query: URLSearc
     }
     const checked = args.checks === false ? { refuse: [], warn: [] } : await checkFolder(cwd.value, env)
     if (checked.refuse.length) throw new Error(['Not queued: it would fail before it did anything.', ...wouldFail(checked.refuse), 'Fix that and ask again, or pass checks: false to queue it anyway.'].join('\n'))
-    const origin = place ? originFromPlace(place, cwd.value) : await originFromCwd(cwd.value, epic, ASK.options)
+    const origin = place ? await originFromPlace(place, cwd.value) : await originFromCwd(cwd.value, epic, ASK.options)
     const run = q.enqueue({
       argv: argv.value,
       cwd: cwd.value,
@@ -595,7 +597,7 @@ export async function mcp(rpc: Rpc, query: URLSearchParams, q: Queue = queue(), 
 const settings = settingsDoor({
   module: ID,
   fields: SETTINGS,
-  read: () => ({ values: readValues(DIR) }),
+  read: () => ({ values: valuesOf(DIR) }),
   write: (_project, key, value) => {
     const refused = writeValue(DIR, key, value)
     if (!refused && key.startsWith('guard')) MANIFEST.guards = guardsNow()
@@ -606,12 +608,12 @@ const settings = settingsDoor({
 
 /** What the page reads: every run, and the machine as the queue sees it. */
 export function overview(q: Queue, leased: Leases = leases()) {
-  const capacity = capacityOf(readValues(DIR), cores())
+  const capacity = capacityOf(valuesOf(DIR), cores())
   return {
     ok: true,
     runs: q.list(),
     leases: leased.list(),
-    machine: { cores: cores(), load: loadNow(), most: capacity.most, loadAbove: capacity.loadAbove, waitMinutes: capacity.waitMs / 60_000, samples: STRAIN.list(), perKind: capacity.perKind, leasesMost: leasesOf(readValues(DIR)) },
+    machine: { cores: cores(), load: loadNow(), most: capacity.most, loadAbove: capacity.loadAbove, waitMinutes: capacity.waitMs / 60_000, samples: STRAIN.list(), perKind: capacity.perKind, leasesMost: leasesOf(valuesOf(DIR)) },
   }
 }
 

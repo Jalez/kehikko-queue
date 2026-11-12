@@ -118,8 +118,8 @@ describe('what a glance says', () => {
     expect(queueOver(runs, 4000, 3000, 3).map((one) => [one.at, one.waiting, one.running])).toEqual([[1000, 1, 0], [2000, 1, 0], [3000, 1, 0], [4000, 1, 0]])
   })
   test('the strain, with the samples\' range, and when it holds new runs', () => {
-    expect(strainSaid(machine, machine.samples!)).toBe('Load 3.2 on 12 cores; new runs wait above 9.0. Over the last 2 min it went from 1.5 to 3.2.')
-    expect(strainSaid({ ...machine, load: 9.5 }, [])).toBe('Load 9.5 on 12 cores; new runs wait above 9.0, so new runs are being held.')
+    expect(strainSaid(machine, machine.samples!)).toBe('Load 3.2. Pause new runs when the load is above 9 (of 12 cores). Over the last 2 min it went from 1.5 to 3.2.')
+    expect(strainSaid({ ...machine, load: 9.5 }, [])).toBe('Load 9.5. Pause new runs when the load is above 9 (of 12 cores), so new runs are being held.')
   })
   test('the latest results, oldest first, with their counts and the latest one', () => {
     const results = recentResults(RUNS)
@@ -143,11 +143,11 @@ describe('the page at each size', () => {
       expect(within(screen.getByTestId('tile-queue')).getByText('1/2 running')).toBeTruthy()
       expect(within(screen.getByTestId('tile-queue')).getByRole('heading').textContent).toBe('Waiting')
       expect(screen.queryByTestId('tile-results')).toBeNull()
-      expect(screen.getByTestId('tile-load-value').textContent).toBe('3.2 / 9.0')
+      expect(screen.getByTestId('tile-load-value').textContent).toBe('3.2 / 9')
       const pictures = screen.getAllByRole('img')
       expect(pictures.map((one) => one.getAttribute('aria-label'))).toEqual([
-        '1 waiting, 1 of 2 running.',
-        'Load 3.2 on 12 cores; new runs wait above 9.0. Over the last 2 min it went from 1.5 to 3.2.',
+        '1 waiting, 1 of 2 running. Change runs at once…',
+        'Load 3.2. Pause new runs when the load is above 9 (of 12 cores). Over the last 2 min it went from 1.5 to 3.2. Change the load limit…',
       ])
       expect(document.querySelectorAll('[data-run]')).toHaveLength(0)
       expect(screen.queryByTestId('machine')).toBeNull()
@@ -259,7 +259,7 @@ describe('what each tooltip says', () => {
     expect(queueTip({ at: 60_000, waiting: 0, running: 1 }, 2).value).toBe('None waiting')
   })
   test('the load against the limit above which new runs wait', () => {
-    expect(loadTip({ at: 60_000, load: 3.2 }, machine)).toEqual({ value: 'Load 3.2', detail: 'Runs wait above 9.0', note: clock(60_000) })
+    expect(loadTip({ at: 60_000, load: 3.2 }, machine)).toEqual({ value: 'Load 3.2', detail: 'Paused above 9', note: clock(60_000) })
     expect(loadTip({ at: 60_000, load: 9.5 }, machine).detail).toBe('Holding new runs')
   })
   test('every tooltip is three short lines at most, however large the figures and long the labels', () => {
@@ -341,7 +341,7 @@ describe('the tiles drawn at each width', () => {
     expect(tip('tile-queue').textContent).toBe('')
     fireEvent.keyDown(document.body, { key: 'Tab' })
     fireEvent.focus(queue)
-    expect(tip('tile-queue').textContent).toBe(`1 waiting1 / 2 running${clock(5000)}`)
+    expect(tip('tile-queue').textContent).toBe(`1 waiting1 / 2 running${clock(5000)}Change runs at once…`)
     /* Solid, 12 px, a strong border and a shadow, wrapped within a width, outside the plot. */
     const shown = tip('tile-queue')
     for (const one of ['bg-popover', 'text-xs', 'border-foreground/25', 'shadow-lg', 'break-words', 'max-w-[min(15rem,calc(100%-8px))]']) expect(shown.className).toContain(one)
@@ -350,17 +350,19 @@ describe('the tiles drawn at each width', () => {
     expect(shown.getAttribute('data-side')).toBe('below')
     expect(shown.style.top).toBe('calc(100% + 4px)')
     expect((shown.firstElementChild as HTMLElement).className).toContain('font-semibold')
-    expect(shown.children).toHaveLength(3)
+    /* Its three lines, and under a rule what pressing the chart does. */
+    expect(shown.children).toHaveLength(4)
+    expect(shown.lastElementChild!.textContent).toBe('Change runs at once…')
     expect(queue.getAttribute('aria-describedby')).toBe(tip('tile-queue').id)
     expect(tip('tile-queue').getAttribute('aria-live')).toBe('polite')
     fireEvent.keyDown(queue, { key: 'Escape' })
     expect(tip('tile-queue').textContent).toBe('')
     fireEvent.focus(plot('tile-load'))
-    expect(tip('tile-load').textContent).toBe(`Load 2.4Runs wait above 9.0${clock(120_000)}`)
+    expect(tip('tile-load').textContent).toBe(`Load 2.4Paused above 9${clock(120_000)}Change the load limit…`)
     fireEvent.keyDown(plot('tile-load'), { key: 'ArrowLeft' })
     expect(tip('tile-load').textContent).toContain('Load 3.2')
     fireEvent.keyDown(plot('tile-queue'), { key: 'Home' })
-    expect(tip('tile-queue').textContent).toBe(`None waiting0 / 2 running${clock(5000 - 30 * 60_000)}`)
+    expect(tip('tile-queue').textContent).toBe(`None waiting0 / 2 running${clock(5000 - 30 * 60_000)}Change runs at once…`)
     fireEvent.blur(plot('tile-queue'))
     expect(tip('tile-queue').textContent).toBe('')
   })
@@ -452,7 +454,7 @@ describe('one chart tooltip, and only while it is wanted (Test runs 0.9.2)', () 
     fireEvent.pointerDown(document.body, { pointerType: 'mouse' })
     fireEvent.keyDown(document.body, { key: 'Tab' })
     fireEvent.focus(queue)
-    expect(tip('tile-queue')).toBe(`1 waiting1 / 2 running${clock(5000)}`)
+    expect(tip('tile-queue')).toBe(`1 waiting1 / 2 running${clock(5000)}Change runs at once…`)
     fireEvent.blur(queue)
     expect(tip('tile-queue')).toBe('')
   })

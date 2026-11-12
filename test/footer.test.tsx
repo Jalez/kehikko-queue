@@ -22,7 +22,7 @@ describe('the footer', () => {
     ]
     const items = footerItems({ runs, machine, trouble: null })
     expect(items.find((i) => i.id === 'queue')).toMatchObject({ kind: 'text', text: '1 waiting · 1 running' })
-    expect(items.find((i) => i.id === 'load')).toMatchObject({ kind: 'meter', label: 'Load', text: '3.2 / 9.0', level: 'normal' })
+    expect(items.find((i) => i.id === 'load')).toMatchObject({ kind: 'meter', label: 'Load', text: '3.2 / 9', level: 'normal' })
     expect(items.find((i) => i.id === 'results')).toMatchObject({ kind: 'text', text: '1 passed · 1 failed', level: 'warn', optional: true })
     expect(items.every((i) => i.kind === 'text' || i.kind === 'meter')).toBe(true)
   })
@@ -37,7 +37,7 @@ describe('the footer', () => {
 
   test('a load above the limit is critical and says held; no results yet, no results item', () => {
     const items = footerItems({ runs: [], machine: { ...machine, load: 10 }, trouble: null })
-    expect(items.find((i) => i.id === 'load')).toMatchObject({ value: 1, level: 'critical', text: '10.0 / 9.0 held' })
+    expect(items.find((i) => i.id === 'load')).toMatchObject({ value: 1, level: 'critical', text: '10 / 9 held' })
     expect(items.some((i) => i.id === 'results')).toBe(false)
     expect(items.find((i) => i.id === 'queue')).toMatchObject({ text: 'none waiting · 0 running' })
   })

@@ -1,6 +1,6 @@
 {
   "name": "kehikko-queue",
-  "version": "0.20.2",
+  "version": "0.20.3",
   "private": true,
   "type": "module",
   "description": "Queue, a module a Kehikot host frames: one machine-wide queue for heavy work (test suites, builds, other resource-intensive commands) from every session, started when there is room.",
@@ -23,7 +23,7 @@
     "@radix-ui/react-slot": "^1.3.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "kehikot-module-protocol": "git+https://github.com/Jalez/kehikko-protocol.git#v2.86.0",
+    "kehikot-module-protocol": "git+https://github.com/Jalez/kehikko-protocol.git#v2.90.0",
     "lucide-react": "^1.33.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",

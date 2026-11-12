@@ -128,7 +128,7 @@ export const DECLARED: Manifest = manifestSchema.parse({
        agents:message for `messages.notify` (protocol 2.54.0): a run's result told to the session that asked, when nothing waits on it.
        state:keep for `state.set` (protocol 2.70.0): the kept view, the list's scroll position given back on the next greeting.
        The header declares nothing, so no item's value is kept or pressed back. */
-    uses: ['activity:report', 'view:navigate', 'agents:message', 'state:keep'],
+    uses: ['activity:report', 'view:navigate', 'agents:message', 'state:keep', 'settings:open'],
     /* The jump-into button's view.goto carries the run's project (when it is not the open one) and
        the session that asked for it (protocol 2.28.0): a host before 2.28 is not asked. */
     navigates: ['project', 'show'],

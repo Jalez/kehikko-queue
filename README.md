@@ -13,8 +13,9 @@ Now each run waits in Queue and starts when there is room; whoever asked waits f
   build or a task is published to other modules as `other`.
 
 - **When a run starts.** At most a few at once (Settings › Modules › Queue › *Runs at once*;
-  automatic is one per six cores, 2 on a 12-core Mac). No new run starts while the 1-minute load is
-  above *Busy above* per core (0.75: 9 on 12 cores), but a run that has waited *Start anyway after*
+  automatic is one per six cores, 2 on a 12-core Mac). No new run starts while the 1-minute load average is
+  above *Pause new runs above load* — the load itself, the number the Load chart draws (automatic: three
+  quarters of the cores, 9 on 12 cores) — but a run that has waited *Start anyway after*
   (10 minutes) starts as soon as a slot is free, oldest first, so nothing waits forever.
 - **Who goes first.** A `push` (a pre-push hook a person is waiting on) before every other kind; first come first served within each. You can move a waiting run up, down or to the top,
   and cancel any run, on the page.

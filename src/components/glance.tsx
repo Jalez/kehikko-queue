@@ -3,11 +3,12 @@ import { Area, AreaChart, CartesianGrid, ReferenceDot, ReferenceLine, XAxis, YAx
 
 import { Plot } from '@/components/plot'
 import { ChartContainer, type ChartConfig } from '@/components/ui/chart'
-import { clock, HEAD_HEIGHT, holding, loadTip, niceTop, PAD_X, PAD_Y, queueNow, queueOver, queueSaid, queueTip, ROW_GAP, strainSaid, SUB_HEIGHT, tileLayout, type TileLayout } from '@/glance'
+import { CHART_HINTS, clock, HEAD_HEIGHT, holding, loadAgainst, loadTip, niceTop, PAD_X, PAD_Y, queueNow, queueOver, queueSaid, queueTip, ROW_GAP, strainSaid, SUB_HEIGHT, tileLayout, type TileLayout } from '@/glance'
 import { useBox } from '@/use-box'
 import type { Machine } from '@/wire/api'
 
 import type { RunView } from '../../queue/queue.ts'
+import { LOAD_KEY, loadText, MOST_KEY } from '../../queue/load.ts'
 
 /**
  * The two tiles a person reads at a glance: the waiting (how many runs are in line, over the last half
@@ -27,8 +28,11 @@ const MARGIN = { top: 2, right: 0, bottom: 0, left: 0 }
 /* Room for the top tick's text above the plot and the last time's below it, so no axis is clipped. */
 const AXES_MARGIN = { top: 6, right: 4, bottom: 0, left: 0 }
 
-/** `width`: the tiles' row, when the tests say it; else measured. */
-export function Glance({ runs, machine, now, width }: { runs: readonly RunView[]; machine: Machine; now: number; width?: number }) {
+/**
+ * `width`: the tiles' row, when the tests say it; else measured. `onOpen`: pressing a chart opens the
+ * setting it is about — the Load chart the load limit, the Waiting chart Runs at once.
+ */
+export function Glance({ runs, machine, now, width, onOpen }: { runs: readonly RunView[]; machine: Machine; now: number; width?: number; onOpen?: (key: string) => void }) {
   const row = useRef<HTMLDivElement>(null)
   const measured = useBox(row)
   const layout = tileLayout(width ?? measured?.width ?? null)
@@ -41,7 +45,7 @@ export function Glance({ runs, machine, now, width }: { runs: readonly RunView[]
     /* No cards: the grid's 1 px gap shows the border colour between tiles, which stand on the page's own background. */
     <div ref={row} className="bg-border grid min-w-0 shrink-0 grid-cols-1 gap-px @min-[360px]:grid-cols-2" data-testid="glance" data-axes={layout.axes} data-compact={layout.compact}>
       <Tile layout={layout} title="Waiting" label="Runs waiting in the queue" value={queue.waiting ? `${queue.waiting} waiting` : 'none waiting'} sub={`${queue.running}/${queue.most} running`} testId="tile-queue">
-        <Plot said={queueSaid(queue)} count={over.length} kind="line" height={layout.plot} tip={(i) => queueTip(over[i]!, queue.most)} testId="tile-queue">
+        <Plot said={queueSaid(queue)} count={over.length} kind="line" height={layout.plot} tip={(i) => queueTip(over[i]!, queue.most)} testId="tile-queue" hint={onOpen ? CHART_HINTS.queue : undefined} onOpen={onOpen ? () => onOpen(MOST_KEY) : undefined}>
           {(active) => (
             <AreaPlot data={over} dataKey="waiting" also="running" config={QUEUE} axes={layout.axes} active={active} top={top} limit={null} step format={(v) => String(v)} />
           )}
@@ -50,12 +54,12 @@ export function Glance({ runs, machine, now, width }: { runs: readonly RunView[]
       <Tile
         layout={layout}
         title="Load"
-        value={`${machine.load.toFixed(1)} / ${machine.loadAbove.toFixed(1)}`}
+        value={loadAgainst(machine)}
         sub={held ? 'holding new runs' : `${machine.cores} cores`}
         subTone={held ? 'text-destructive' : undefined}
         testId="tile-load"
       >
-        <Plot said={strainSaid(machine, samples)} count={samples.length > 1 ? samples.length : 0} kind="line" height={layout.plot} tip={(i) => loadTip(samples[i]!, machine)} testId="tile-load">
+        <Plot said={strainSaid(machine, samples)} count={samples.length > 1 ? samples.length : 0} kind="line" height={layout.plot} tip={(i) => loadTip(samples[i]!, machine)} testId="tile-load" hint={onOpen ? CHART_HINTS.load : undefined} onOpen={onOpen ? () => onOpen(LOAD_KEY) : undefined}>
           {(active) =>
             samples.length > 1 ? (
               <AreaPlot
@@ -66,7 +70,7 @@ export function Glance({ runs, machine, now, width }: { runs: readonly RunView[]
                 active={active}
                 top={niceTop(Math.max(machine.loadAbove, ...samples.map((one) => one.load)) * 1.1)}
                 limit={machine.loadAbove}
-                format={(v) => String(v)}
+                format={(v) => loadText(v)}
               />
             ) : null
           }
