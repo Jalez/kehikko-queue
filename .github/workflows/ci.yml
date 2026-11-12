@@ -1,4 +1,4 @@
-# Typecheck and test every push to main and every pull request: the same two
+# Typecheck, build the page and test every push to main and every pull request: the same two
 # checks the release workflow runs before it publishes anything.
 name: ci
 
@@ -15,5 +15,6 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
+      - run: bun run build
       - run: bun run test
       - run: bun run check:rows
