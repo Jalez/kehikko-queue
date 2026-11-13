@@ -7,6 +7,7 @@ import { checkFolder, preflightRefusal, wouldFail } from './preflight.ts'
 import { ended, type Asker, type Queue } from './queue.ts'
 import { rangeOf, TTL_DEFAULT_MS, type Leases } from './leases.ts'
 import { projectOf } from '../store.ts'
+import { refusalFor } from '../bin/waiting.ts'
 
 /**
  * The CLI's door (`bin/kehikot-queue`, which a git hook runs), and the fence in front of `/mcp`.
@@ -142,6 +143,9 @@ export function cliDoor(options: CliDoorOptions): Before {
       if (!body) return refuse(400, 'The body is a JSON object, at most 1 MB, sent as application/json.')
       const argv = argvOf(body.argv, '/bin/sh')
       if (!argv.ok || !Array.isArray(body.argv)) return refuse(400, argv.ok ? 'argv is the command as an array of words.' : argv.why)
+      /* The same refusal as the CLI's own, for a CLI that does not make it (issue #48). */
+      const waits = refusalFor(argv.value)
+      if (waits) return Response.json({ ok: false, refused: true, error: waits }, { status: 422 })
       const cwd = cwdOf(body.cwd)
       if (!cwd.ok) return refuse(400, cwd.why)
       const keep = Array.isArray(body.keepEnv) ? body.keepEnv.filter((one): one is string => typeof one === 'string').slice(0, 64) : []

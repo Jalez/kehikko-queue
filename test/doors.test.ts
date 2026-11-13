@@ -29,7 +29,7 @@ const ask = (path: string, init: RequestInit & { headers?: Record<string, string
   return door()(request, beforeInfo(request))
 }
 const runBody = (over: Record<string, unknown> = {}) =>
-  JSON.stringify({ argv: ['sh', '-c', 'echo hi; sleep 1; exit 3'], cwd: tmpdir(), env: { PATH: process.env.PATH }, kind: 'push', label: 'pre-push', ...over })
+  JSON.stringify({ argv: ['sh', '-c', 'echo hi; bun -e "await Bun.sleep(1000)"; exit 3'], cwd: tmpdir(), env: { PATH: process.env.PATH }, kind: 'push', label: 'pre-push', ...over })
 
 describe('the CLI door refuses what is not a program of this user', () => {
   test('a page, of any origin, even this module\'s own', async () => {
@@ -72,7 +72,7 @@ describe('the CLI door, for the program that has the token', () => {
     expect(lines.at(-1).end).toMatchObject({ id: body.id, state: 'failed', exit: 3, kind: 'push', label: 'pre-push' })
   })
   test('cancels with the run\'s key, and only with it', async () => {
-    const queued = await ask('/api/queue/run', { method: 'POST', headers: { 'content-type': 'application/json', [TOKEN_HEADER]: TOKEN }, body: runBody({ argv: ['sh', '-c', 'sleep 5'] }) })
+    const queued = await ask('/api/queue/run', { method: 'POST', headers: { 'content-type': 'application/json', [TOKEN_HEADER]: TOKEN }, body: runBody({ argv: ['sh', '-c', 'bun -e "await Bun.sleep(5000)"'] }) })
     const { id, key } = (await queued!.json()) as { id: string; key: string }
     const wrong = await ask('/api/queue/cancel', { method: 'POST', headers: { 'content-type': 'application/json', [TOKEN_HEADER]: TOKEN }, body: JSON.stringify({ id, key: 'nope' }) })
     expect(wrong?.status).toBe(400)
@@ -117,12 +117,12 @@ describe('the MCP door', () => {
   })
   test('queue_cancel cancels only your own: by place, or by key', async () => {
     ASK.options = { fetch: placeFetch, env: { KEHIKOT_ORIGINS: 'http://127.0.0.1:9' } }
-    const mine = await call('queue_run', { command: 'sleep 5', cwd: tmpdir() }, `kehikot-place=${PLACE}`)
+    const mine = await call('queue_run', { command: 'bun -e "await Bun.sleep(5000)"', cwd: tmpdir() }, `kehikot-place=${PLACE}`)
     const id = /Queued (r[0-9a-z]+)/.exec(mine.text)![1]!
     expect((await call('queue_cancel', { id })).error).toBe(true)
     expect((await call('queue_cancel', { id }, `kehikot-place=${'Q'.repeat(32)}`)).error).toBe(true)
     expect((await call('queue_cancel', { id }, `kehikot-place=${PLACE}`)).text).toContain('Cancelled')
-    const other = await call('queue_run', { command: ['sh', '-c', 'sleep 5'], cwd: tmpdir() })
+    const other = await call('queue_run', { command: ['sh', '-c', 'bun -e "await Bun.sleep(5000)"'], cwd: tmpdir() })
     const [, otherId, key] = /Queued (r[0-9a-z]+) \(key ([A-Za-z0-9_-]+)\)/.exec(other.text)!
     expect((await call('queue_cancel', { id: otherId, key: key! })).text).toContain('Cancelled')
   })
@@ -186,7 +186,7 @@ describe('the strain on the machine', () => {
 
 describe('the page\'s writes', () => {
   test('cancel and move need the page\'s ticket', async () => {
-    const run = q.enqueue({ argv: ['sh', '-c', 'sleep 5'], cwd: tmpdir(), env: {}, kind: 'other', label: 'x', refs: [], epic: null, project: null, asker: { via: 'cli', said: 'a test', token: null, conversation: null } })
+    const run = q.enqueue({ argv: ['sh', '-c', 'bun -e "await Bun.sleep(5000)"'], cwd: tmpdir(), env: {}, kind: 'other', label: 'x', refs: [], epic: null, project: null, asker: { via: 'cli', said: 'a test', token: null, conversation: null } })
     const refused = await answer('POST', '/api/act', new URLSearchParams(), { op: 'cancel', id: run.id }, null, q)
     expect(refused?.status).toBe(403)
     const done = await answer('POST', '/api/act', new URLSearchParams(), { op: 'cancel', id: run.id }, TICKET, q)
@@ -204,9 +204,9 @@ describe('the page\'s writes', () => {
 describe('per-kind limits and dev-server leases at the agent door', () => {
   test('queue_lease is offered; queue_status says the limits, each run\'s place and who asked, and the dev servers', async () => {
     expect(tools().map((one) => one.name)).toContain('queue_lease')
-    q.enqueue({ argv: ['sh', '-c', 'sleep 5'], cwd: tmpdir(), env: { PATH: process.env.PATH ?? '' }, kind: 'verify', label: 'one', refs: [], epic: null, project: null, asker: { via: 'cli', said: 'a shell, in /tmp', token: null, conversation: null } })
-    q.enqueue({ argv: ['sh', '-c', 'sleep 5'], cwd: tmpdir(), env: { PATH: process.env.PATH ?? '' }, kind: 'verify', label: 'two', refs: [], epic: null, project: null, asker: { via: 'cli', said: 'a shell, in /tmp', token: null, conversation: null } })
-    q.enqueue({ argv: ['sh', '-c', 'sleep 5'], cwd: tmpdir(), env: { PATH: process.env.PATH ?? '' }, kind: 'verify', label: 'three', refs: [], epic: null, project: null, asker: { via: 'cli', said: 'a shell, in /tmp', token: null, conversation: null, agent: 'Claude Code', session: 'sess12345678' } })
+    q.enqueue({ argv: ['sh', '-c', 'bun -e "await Bun.sleep(5000)"'], cwd: tmpdir(), env: { PATH: process.env.PATH ?? '' }, kind: 'verify', label: 'one', refs: [], epic: null, project: null, asker: { via: 'cli', said: 'a shell, in /tmp', token: null, conversation: null } })
+    q.enqueue({ argv: ['sh', '-c', 'bun -e "await Bun.sleep(5000)"'], cwd: tmpdir(), env: { PATH: process.env.PATH ?? '' }, kind: 'verify', label: 'two', refs: [], epic: null, project: null, asker: { via: 'cli', said: 'a shell, in /tmp', token: null, conversation: null } })
+    q.enqueue({ argv: ['sh', '-c', 'bun -e "await Bun.sleep(5000)"'], cwd: tmpdir(), env: { PATH: process.env.PATH ?? '' }, kind: 'verify', label: 'three', refs: [], epic: null, project: null, asker: { via: 'cli', said: 'a shell, in /tmp', token: null, conversation: null, agent: 'Claude Code', session: 'sess12345678' } })
     const reply = await mcp({ id: 1, method: 'tools/call', params: { name: 'queue_status', arguments: {} } }, new URLSearchParams(), q)
     const text = ((reply.body as { result: { content: Array<{ text: string }> } }).result.content[0]!).text
     expect(text).toContain('of each kind at most')

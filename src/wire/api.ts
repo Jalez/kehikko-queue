@@ -55,7 +55,17 @@ export interface Api {
 }
 
 type Got = { runs?: RunView[]; leases?: LeaseView[]; machine?: Machine }
-const overview = (got: Got): Overview => ({ runs: got.runs ?? [], leases: got.leases ?? [], machine: got.machine ?? { cores: 0, load: 0, most: 0, loadAbove: 0, waitMinutes: 0 } })
+/**
+ * What the server answered, as the page's overview. An answer without the runs or the machine is NOT
+ * an empty queue: it is the page having lost its source, and reading it as zero runs and zero limits
+ * is how the page once showed "0 running, 0 waiting" while runs were running (issue #47). It throws,
+ * and the page says it cannot reach the queue.
+ */
+export const NOT_THE_QUEUE = 'The Queue server answered with something that is not the queue.'
+export const overview = (got: Got): Overview => {
+  if (!Array.isArray(got.runs) || !got.machine || typeof got.machine !== 'object') throw new Error(NOT_THE_QUEUE)
+  return { runs: got.runs, leases: got.leases ?? [], machine: got.machine }
+}
 
 export const api: Api = {
   async runs() {

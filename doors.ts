@@ -30,6 +30,8 @@ import { SETTINGS, capacityOf, cores, leasesOf, loadNow, migrateValues, valuesOf
 import { leaseSaid, Leases, rangeOf, TTL_DEFAULT_MS } from './queue/leases.ts'
 import { KIND_WORDS, LIMITED } from './queue/kinds.ts'
 import { guardSettingsOf, guardsFor } from './queue/guards.ts'
+import { idleSaid } from './queue/idle.ts'
+import { refusalFor } from './bin/waiting.ts'
 import { checkFolder, preflightRefusal, wouldFail } from './queue/preflight.ts'
 import { servicesFor } from './queue/service.ts'
 
@@ -206,6 +208,7 @@ export function runSaid(run: RunView): string {
   const lines = [head, `  ${run.position !== null ? `#${run.position} in line, ` : ''}from ${askedSaid(run.asker)}${run.epic ? `, epic ${run.epic}` : ''}${run.refs.length ? `, for ${run.refs.join(', ')}` : ''}`]
   lines.push(`  in ${run.cwd}: ${run.argv.join(' ').slice(0, 200)}`)
   if (run.state === 'queued') lines.push(`  ${run.waiting ?? 'Waiting.'} Asked ${at(run.queuedAt)}.`)
+  if (run.state === 'running' && run.idleSince !== null) lines.push(`  ${idleSaid(run.idleSince, Date.now())}`)
   if (run.state === 'running') lines.push(`  Running since ${at(run.startedAt)} (waited ${took(run.queuedAt, run.startedAt)}${run.overdue ? ', started past the load guard after its longest wait' : ''}).`)
   if (ended(run.state)) lines.push(`  Ended ${at(run.finishedAt)}: waited ${took(run.queuedAt, run.startedAt ?? run.finishedAt)}, ran ${took(run.startedAt, run.finishedAt) || '0 s'}.${run.why ? ` ${run.why}` : ''}`)
   return lines.join('\n')
@@ -246,7 +249,7 @@ export function tools() {
         + 'command — in this computer\'s one queue instead of starting it now, so runs from several sessions do not starve each '
         + 'other. Queue starts it when there is room — at most a few at once, '
         + 'and not while the machine is busy (but never later than its longest wait) — in its own process, in `cwd`, with the '
-        + 'person\'s login shell environment, and keeps its output. Answers an id and a key at once, and the command line that waits '
+        + 'person\'s login shell environment, and keeps its output. Never put a command that sleeps, polls or reads the load in it: it is refused, since the queue already waits for a quiet machine and a waiting command only holds a slot. Answers an id and a key at once, and the command line that waits '
         + 'for it as long as it takes: run that as a BACKGROUND shell command (in Claude Code, Bash with run_in_background) and you '
         + 'are woken when it exits with the run\'s exit code. Or call queue_wait with the id. Do not poll the machine\'s load. Its pass '
         + 'or fail is the command\'s own exit code. A fault in the folder is said at once instead of after the wait: an untrusted mise '
@@ -478,6 +481,9 @@ async function call(name: string, args: Record<string, unknown>, query: URLSearc
     if (!cwd.ok) throw new Error(args.cwd === undefined && !project ? `${DOOR_PLACE_SAYS.unplaced} Or pass cwd: the folder to run it in.` : cwd.why)
     const argv = argvOf(args.command, process.env.SHELL || '/bin/sh')
     if (!argv.ok) throw new Error(argv.why)
+    /* The same refusal as the CLI's and the hook guard's: a slot is not for waiting in (issue #48). */
+    const waits = refusalFor(argv.value)
+    if (waits) throw new Error(waits)
     const kind = kindOf(args.kind)
     if (!kind.ok) throw new Error(kind.why)
     const label = labelOf(args.label, argv.value)

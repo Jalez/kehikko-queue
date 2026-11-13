@@ -220,3 +220,83 @@ describe('opening a run', () => {
   })
 })
 
+
+describe('a queue out of reach is never drawn as zero (issue #47)', () => {
+  const idle = { cores: 12, load: 3.2, most: 2, loadAbove: 9, waitMinutes: 10 }
+
+  test('the server stops answering after a read: the last numbers stay, greyed, with a sentence and their age', async () => {
+    let t = 10 * 60_000
+    let up = true
+    const runs = [aRun({ id: 'u1', state: 'running', finishedAt: null, exit: null, label: 'unit' }), aRun({ id: 'u2', state: 'running', finishedAt: null, exit: null, label: 'lint' }), aRun({ id: 'w1', state: 'queued', startedAt: null, finishedAt: null, exit: null, position: 1 })]
+    const s = streams()
+    const api: Api = { ...fakeApi(runs).api, ...s.api, runs: async () => (up ? { runs, machine: idle } : Promise.reject(new Error('connect ECONNREFUSED'))) }
+    render(<Screen host={host()} api={api} now={() => t} />)
+    await settle()
+    expect(screen.queryByTestId('unreachable')).toBeNull()
+    expect(screen.getByTestId('numbers').getAttribute('data-stale')).toBeNull()
+    expect(screen.getByTestId('tile-queue').textContent).toContain('1 waiting')
+    up = false
+    t += 12 * 60_000
+    await act(async () => s.tell())
+    await settle()
+    const said = screen.getByTestId('unreachable').textContent!
+    expect(said).toContain("Can't reach the Queue server: numbers unavailable.")
+    expect(said).toContain('Last seen 12 min ago')
+    expect(said).toContain('last known')
+    /* Not zero: the last numbers are still there, marked as old. */
+    expect(screen.getByTestId('numbers').getAttribute('data-stale')).toBe('true')
+    expect(screen.getByTestId('tile-queue').textContent).toContain('1 waiting')
+    expect(screen.getByTestId('tile-queue').textContent).not.toContain('none waiting')
+    /* It reads again when the queue answers again. */
+    up = true
+    await act(async () => s.tell())
+    await settle()
+    expect(screen.queryByTestId('unreachable')).toBeNull()
+  })
+
+  test('an answer that is not the queue is not an empty queue', async () => {
+    const { overview } = await import('../src/wire/api.ts')
+    expect(() => overview({})).toThrow('not the queue')
+    expect(() => overview({ runs: [] })).toThrow('not the queue')
+    expect(overview({ runs: [], machine: idle }).runs).toEqual([])
+    const api: Api = { ...fakeApi([]).api, runs: async () => overview({}) }
+    render(<Screen host={host()} api={api} now={() => 5000} />)
+    await settle()
+    expect(screen.getByTestId('unreachable').textContent).toContain('numbers unavailable')
+    expect(screen.queryByTestId('empty')).toBeNull()
+    expect(screen.queryByTestId('glance')).toBeNull()
+  })
+
+  test('the host-drawn footer says it too, and carries no numbers', async () => {
+    let footer: unknown[] = []
+    const api: Api = { ...fakeApi([]).api, runs: async () => Promise.reject(new Error('connect ECONNREFUSED')) }
+    render(<Screen host={host({ drawsFooter: true, footer: (items) => void (footer = items as unknown[]) })} api={api} now={() => 5000} />)
+    await settle()
+    expect(JSON.stringify(footer)).toContain("Can't reach the Queue server")
+    expect((footer as { id: string }[]).map((one) => one.id)).toEqual(['trouble'])
+  })
+})
+
+describe('a run that holds its slot doing nothing says so (issue #48)', () => {
+  test('flagged on its row and its line, with the way out; a busy run says nothing', async () => {
+    const runs = [
+      aRun({ id: 'i1', state: 'running', finishedAt: null, exit: null, label: 'waits', idleSince: 5000 - 9 * 60_000 }),
+      aRun({ id: 'b1', state: 'running', finishedAt: null, exit: null, label: 'works' }),
+    ]
+    render(<Screen host={host()} api={fakeApi(runs).api} now={() => 5000} />)
+    await settle()
+    const flagged = screen.getAllByTestId('idle')
+    expect(flagged).toHaveLength(1)
+    expect(flagged[0]!.textContent).toContain('Idle in its slot')
+    expect(flagged[0]!.textContent).toContain('9 min')
+    expect(flagged[0]!.textContent).toContain('Cancel it')
+    expect(screen.getByRole('region', { name: 'Running' }).querySelector('li[data-run="b1"]')!.textContent).not.toContain('Idle')
+  })
+  test('a server that does not know idleSince (an older one) flags nothing', async () => {
+    const run = aRun({ id: 'o1', state: 'running', finishedAt: null, exit: null })
+    delete (run as Partial<typeof run>).idleSince
+    render(<Screen host={host()} api={fakeApi([run]).api} now={() => 5000} />)
+    await settle()
+    expect(screen.queryByTestId('idle')).toBeNull()
+  })
+})

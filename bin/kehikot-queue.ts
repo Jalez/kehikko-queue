@@ -77,6 +77,7 @@ import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 
 import { escaped, planOf } from './guard-plan.ts'
+import { refusalFor } from './waiting.ts'
 
 const ID = 'kehikot.queue'
 const TOKEN_HEADER = 'x-kehikot-queue-token'
@@ -348,10 +349,23 @@ export async function queued(parsed: Parsed, env: Env = process.env, cwd = proce
   if (parsed.guard) {
     const line = guardedLine(parsed.argv)
     if (line === null || escaped(line, env)) return quietly(parsed.argv)
+    /* A command that waits is refused whether or not it is heavy: a slot is not for sleeping in (issue #48). */
+    const waits = refusalFor(parsed.argv)
+    if (waits) {
+      for (const said of waits.split('\n')) SAY(said)
+      return 1
+    }
     const plan = planOf(line, cwd)
     if ('direct' in plan) return quietly(parsed.argv)
     parsed.kind = plan.queue
     parsed.from ??= `${parsed.agent ? `${parsed.agent}'s` : 'an agent\'s'} shell, through Queue's guard`
+  }
+  if (!parsed.guard) {
+    const waits = refusalFor(parsed.argv)
+    if (waits) {
+      SAY(waits)
+      return 1
+    }
   }
   if (env.KEHIKOT_QUEUE_RUN) return direct(parsed.argv, `This is already inside queued run ${env.KEHIKOT_QUEUE_RUN}, so it does not wait behind it.`, true)
   const { known, token } = addresses(env)

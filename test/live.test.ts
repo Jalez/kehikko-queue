@@ -59,7 +59,7 @@ describe('the queue stream', () => {
     expect(page.heard).toEqual([NEWS])
     expect(watching(RUNS_TOPIC)).toBe(1)
 
-    const ran = await call('queue_run', { command: ['sh', '-c', 'sleep 0.3'], cwd: tmpdir(), label: 'short' })
+    const ran = await call('queue_run', { command: ['sh', '-c', 'bun -e "await Bun.sleep(300)"'], cwd: tmpdir(), label: 'short' })
     const id = /Queued (r[0-9a-z]+)/.exec(ran)![1]!
     await settle()
     /* Asked for and started in one breath: one piece of news. */
@@ -70,7 +70,7 @@ describe('the queue stream', () => {
     expect(queue().get(id)?.state).toBe('passed')
     expect(page.heard.length).toBe(3)
 
-    const long = await call('queue_run', { command: ['sh', '-c', 'sleep 5'], cwd: tmpdir() })
+    const long = await call('queue_run', { command: ['sh', '-c', 'bun -e "await Bun.sleep(5000)"'], cwd: tmpdir() })
     const [, longId, key] = /Queued (r[0-9a-z]+) \(key ([A-Za-z0-9_-]+)\)/.exec(long)!
     await settle()
     const before = page.heard.length
@@ -106,7 +106,7 @@ describe('the queue stream', () => {
 
 describe('a run’s output stream', () => {
   test('the file’s watch tells of an append at once', async () => {
-    const ran = await call('queue_run', { command: ['sh', '-c', 'sleep 2'], cwd: tmpdir() })
+    const ran = await call('queue_run', { command: ['sh', '-c', 'bun -e "await Bun.sleep(2000)"'], cwd: tmpdir() })
     const id = /Queued (r[0-9a-z]+)/.exec(ran)![1]!
     const page = open(OUTPUT_EVENTS, `id=${id}`)
     const other = open(OUTPUT_EVENTS, 'id=r-someone-else')
@@ -126,7 +126,7 @@ describe('a run’s output stream', () => {
   test('where the watch is never told (Bun), the run’s own printing still arrives within a second, once', async () => {
     useWatches(false)
     try {
-      const ran = await call('queue_run', { command: ['sh', '-c', 'sleep 0.6; echo two; sleep 2.5'], cwd: tmpdir() })
+      const ran = await call('queue_run', { command: ['sh', '-c', 'bun -e "await Bun.sleep(600)"; echo two; bun -e "await Bun.sleep(2500)"'], cwd: tmpdir() })
       const id = /Queued (r[0-9a-z]+)/.exec(ran)![1]!
       const page = open(OUTPUT_EVENTS, `id=${id}`)
       expect(page.heard).toEqual([NEWS])
@@ -146,7 +146,7 @@ describe('a run’s output stream', () => {
 
   test('no size look runs while nobody follows; it stops when the last stream closes, and when the run ends', async () => {
     expect(statTimers()).toBe(0)
-    const ran = await call('queue_run', { command: ['sh', '-c', 'sleep 1'], cwd: tmpdir() })
+    const ran = await call('queue_run', { command: ['sh', '-c', 'bun -e "await Bun.sleep(1000)"'], cwd: tmpdir() })
     const id = /Queued (r[0-9a-z]+)/.exec(ran)![1]!
     expect(statTimers()).toBe(0)
 

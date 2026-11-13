@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet'
 import { footerItems } from '@/footer'
 import { headerItems, pressed, showingOf, type Showing } from '@/header'
-import { atLeast, levelOf, type Box, type Level } from '@/glance'
+import { atLeast, levelOf, unreachableSaid, type Box, type Level } from '@/glance'
 import { inboxItems, runIdOf } from '@/inbox'
 import { useBox } from '@/use-box'
 import { api as realApi, type Api, type Overview } from '@/wire/api'
@@ -23,6 +23,7 @@ import { loadText } from '../queue/load.ts'
 import type { RunView } from '../queue/queue.ts'
 import type { LeaseView } from '../queue/leases.ts'
 import { askedSaid, whoAsked } from '../queue/who.ts'
+import { idleSaid } from '../queue/idle.ts'
 import { KIND_WORDS, LIMITED } from '../queue/kinds.ts'
 
 type Press = { item: string; value?: PressValue }
@@ -73,9 +74,15 @@ export function Screen({
   /* Every project's runs at This computer (the default), the open project's at Project: the scope, said by the host. */
   const showing: Showing = asked ?? showingOf(host.workingScope, host.projectPath)
   /* The queue is this computer's: it is drawn with no project open too. */
-  const cover = coverFor({ ...host, server }, { project: false })
+  const served = coverFor({ ...host, server }, { project: false })
   const [overview, setOverview] = useState<Overview | null>(null)
   const [said, setSaid] = useState<string | null>(null)
+  /* When the queue was last read, and whether the last read failed (issue #47): a queue out of reach is never drawn as zero. */
+  const [seenAt, setSeenAt] = useState<number | null>(null)
+  const [readFailed, setReadFailed] = useState(false)
+  const lost = served === 'down' || readFailed
+  /* The last numbers stay, greyed and with their age, instead of the server-down cover; with none to keep, the cover says it. */
+  const cover = served === 'down' && overview !== null ? null : served
   /* The run whose output the drawer shows: one at a time, by id. */
   const [open, setOpen] = useState<string | null>(null)
   const [jumpSaid, setJumpSaid] = useState<string | null>(null)
@@ -100,9 +107,15 @@ export function Screen({
       (got) => {
         setOverview(got)
         setSaid(null)
+        setReadFailed(false)
+        setSeenAt(now())
       },
-      (error: unknown) => setSaid(error instanceof Error ? error.message : String(error)),
+      (error: unknown) => {
+        setReadFailed(true)
+        setSaid(error instanceof Error ? error.message : String(error))
+      },
     )
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api])
 
   /* Read when the server says the queue changed, never on a clock; the stream says so once as it
@@ -120,6 +133,8 @@ export function Screen({
       (got) => {
         setOverview(got)
         setSaid(null)
+        setReadFailed(false)
+        setSeenAt(now())
       },
       (error: unknown) => setSaid(error instanceof Error ? error.message : String(error)),
     )
@@ -163,7 +178,7 @@ export function Screen({
      what went wrong, so a container folded to its header and footer still says them. An older host
      draws no footer, and the page keeps saying what went wrong itself. */
   const drawsFooter = host.where === 'hosted' && host.drawsFooter === true
-  const footerSaid = drawsFooter && !cover ? JSON.stringify(footerItems({ runs, machine: overview?.machine ?? null, trouble: said, leases: overview?.leases ?? [] })) : null
+  const footerSaid = drawsFooter && !cover ? JSON.stringify(footerItems(lost ? { runs: [], machine: null, trouble: unreachableSaid(seenAt, now()), leases: [] } : { runs, machine: overview?.machine ?? null, trouble: said, leases: overview?.leases ?? [] })) : null
   const { footer } = host
   useEffect(() => {
     if (footerSaid) footer?.(JSON.parse(footerSaid))
@@ -194,9 +209,16 @@ export function Screen({
       ) : null}
       <main data-kehikot-scroll className={`flex min-h-0 flex-1 flex-col overflow-auto ${level === 'glance' || level === 'list' ? 'gap-2 p-2' : 'gap-3 p-3'}`}>
         {cover ? (
-          <Cover state={cover} name="Queue" onRetry={read} />
+          <Cover state={cover} name="Queue" onRetry={read} detail={cover === 'down' ? unreachableSaid(seenAt, now()) : null} />
         ) : (
           <>
+            {lost ? (
+              <p className="text-destructive text-xs" role="alert" data-testid="unreachable">
+                {unreachableSaid(seenAt, now())}
+                {overview ? ' The numbers below are the last known ones.' : ''}
+              </p>
+            ) : null}
+            <div className={`flex min-h-0 flex-col ${level === 'glance' || level === 'list' ? 'gap-2' : 'gap-3'} ${lost ? 'opacity-50 grayscale' : ''}`} data-stale={lost ? 'true' : undefined} data-testid="numbers">
             {overview ? <Glance runs={runs} machine={overview.machine} now={now()} onOpen={(key) => void openSetting(key)} width={given ? given.width - (level === 'glance' || level === 'list' ? 16 : 24) : undefined} /> : null}
             {overview && level === 'full' ? <MachineLine overview={overview} /> : null}
             {jumpSaid ? (
@@ -204,7 +226,7 @@ export function Screen({
                 {jumpSaid}
               </p>
             ) : null}
-            {said && !drawsFooter ? (
+            {said && !drawsFooter && !lost ? (
               <p className="text-destructive text-xs" role="alert" data-testid="said">
                 {said}
               </p>
@@ -244,6 +266,7 @@ export function Screen({
             </Group>
             </>
             ) : null}
+            </div>
           </>
         )}
       </main>
@@ -355,8 +378,9 @@ function RunLine({ run, focused, onOpen }: { run: RunView; focused: boolean; onO
       >
         <StateMark run={run} iconOnly />
         {/* A label is the asker's words: text, never markup. */}
-        <span className="min-w-0 flex-1 truncate">
+        <span className="min-w-0 flex-1 truncate" title={run.state === 'queued' && run.waiting ? run.waiting : undefined}>
           {run.label}
+          {run.state === 'running' && run.idleSince != null ? <span className="text-amber-700 dark:text-amber-400" data-testid="idle-line"> · idle in its slot</span> : null}
           {run.state === 'queued' ? <span className="text-muted-foreground"> · {whoAsked(run.asker)}</span> : null}
         </span>
         <span className="text-muted-foreground shrink-0 tabular-nums">{when}</span>
@@ -419,6 +443,11 @@ function RunRow({
           {expected ? ` · ${expected}` : ''}
         </p>
       )}
+      {run.state === 'running' && run.idleSince != null ? (
+        <p className="text-amber-700 dark:text-amber-400 mt-0.5 text-xs break-words" data-testid="idle">
+          {idleSaid(run.idleSince, now)}
+        </p>
+      ) : null}
       {run.state !== 'queued' ? (
         <Button variant="link" size="sm" className="h-auto p-0 text-xs" aria-haspopup="dialog" aria-label={`Output of “${run.label}”`} onClick={onOutput}>
           Output
@@ -484,6 +513,7 @@ function RunDrawer({ run, api, jump, jumpSaid, onCancel }: { run: RunView; api: 
             {origin?.branch ? ` · branch ${origin.branch}` : ''}
           </p>
           {run.why ? <p>{run.why}</p> : null}
+          {run.state === 'running' && run.idleSince != null ? <p data-testid="drawer-idle">{idleSaid(run.idleSince, Date.now())}</p> : null}
           {run.expect === 'fail' ? <p>{run.state === 'failed' ? 'It failed, as expected.' : run.state === 'passed' ? 'It passed, but it was expected to fail.' : 'It is expected to fail.'}</p> : null}
           {jumpSaid ? <p role="status">{jumpSaid}</p> : null}
         </div>

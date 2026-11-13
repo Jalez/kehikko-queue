@@ -32,13 +32,13 @@ const decide = (command: string, env: Record<string, string> = {}) => guardDecis
 describe('Queue\'s guards, as the agent modules enforce them', () => {
   test('two rewrites that the protocol takes: heavy work to the queue, dev servers to a lease', () => {
     const guards = guardsFor(CLI, guardSettingsOf({}))
-    expect(guards.map((one) => [one.id, one.action])).toEqual([['heavy', 'rewrite'], ['dev', 'rewrite']])
+    expect(guards.map((one) => [one.id, one.action])).toEqual([['heavy', 'rewrite'], ['dev', 'rewrite'], ['waiting', 'deny']])
     expect(guards[0]!.rewrite).toBe(`'${CLI}' run --guard -- sh -c {command}`)
     expect(guards[1]!.rewrite).toBe(`'${CLI}' lease dev --guard -- sh -c {command}`)
-    expect(manifestSchema.parse({ ...MANIFEST, guards }).guards).toHaveLength(2)
+    expect(manifestSchema.parse({ ...MANIFEST, guards }).guards).toHaveLength(3)
   })
   test('the served manifest declares them', () => {
-    expect(MANIFEST.guards?.map((one) => one.id)).toEqual(['heavy', 'dev'])
+    expect(MANIFEST.guards?.map((one) => one.id)).toEqual(['heavy', 'dev', 'waiting'])
   })
   test('a typecheck, tests, browser tests, a build, an install and their scripts are rewritten to the wrapper', () => {
     for (const command of ['tsc --noEmit', 'npx vitest run', 'bun test', 'npx playwright test', 'vite build', 'bun install', 'npm ci', 'bun run test', 'bun run typecheck', 'npm test', 'cd app && bun run build']) {
