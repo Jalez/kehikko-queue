@@ -29,6 +29,10 @@ export const HEAVY_SCRIPTS = [
 /** Asking a tool what it is passes: nothing heavy runs. */
 export const ALWAYS_DIRECT = ['tsc --version', 'tsc -v', 'tsc --help', 'vitest --version', 'jest --version', 'playwright --version', 'bun test --help'] as const
 
+/** Commands that wait: refused (`deny`) wherever an agent types them, as `bin/waiting.ts` refuses them in a run (issue #48). */
+const WAITING_SAYS = 'Not run: it sleeps, polls or reads the load. The queue already waits for a quiet machine, so queue the real work and let it decide when it starts.'
+export const WAITING_COMMANDS = ['sleep', 'usleep', 'watch', 'until', 'while true', 'while :', 'uptime', 'sysctl vm.loadavg', 'sysctl -n vm.loadavg', 'cat /proc/loadavg'] as const
+
 export const DEV_COMMANDS = ['vite', 'next dev', 'astro dev', 'nuxt dev', 'webpack serve', 'webpack-dev-server'] as const
 export const DEV_SCRIPTS = ['dev', 'start', 'serve', 'preview', 'storybook'] as const
 
@@ -81,6 +85,13 @@ export function guardsFor(cli: string, settings: GuardSettings): Guard[] {
       action: 'rewrite',
       rewrite: `${run} lease dev --guard -- sh -c {command}`,
       why: 'A dev server runs in a leased slot, stopped when this command, its time or this session ends.',
+    },
+    {
+      id: 'waiting',
+      tool: 'shell',
+      match: { commands: [...WAITING_COMMANDS] },
+      action: 'deny',
+      why: WAITING_SAYS,
     },
   ])
 }

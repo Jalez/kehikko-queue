@@ -10,6 +10,8 @@ import { ensureDirs, exitDir, logsDir } from './machine.ts'
 import type { Origin } from './origin.ts'
 import type { Expect } from './expect.ts'
 import { FAST_MS, signatureOf } from './preflight.ts'
+import { idleSince, look, SAMPLE_EVERY_MS, type Sampler, type Watch } from './idle.ts'
+import { psSampler } from './idle-ps.ts'
 
 /**
  * The queue: every run asked for on this computer, from any session, in one list. It starts each
@@ -109,7 +111,12 @@ export interface Run {
 const RETIRED = ['seenAt', 'seenBy', 'supersededBy', 'askerToldAt'] as const
 
 /** A run as anyone may see it: no key, no environment. */
-export type RunView = Omit<Run, 'key'> & { position: number | null; waiting: string | null }
+export type RunView = Omit<Run, 'key'> & {
+  position: number | null
+  waiting: string | null
+  /** Since when a running run has used almost no CPU (issue #48), or null. Only ever flagged, never acted on. */
+  idleSince: number | null
+}
 
 export interface QueueOptions {
   dir: string
@@ -123,6 +130,10 @@ export interface QueueOptions {
   changed?(): void
   /** Told after every look at the load and the runs (`tick`), changed or not: for what moves with the load. */
   ticked?(): void
+  /** How the processes of the running runs are looked at, for idle slots. Default: `ps`. Tests pass their own, or none (`null`). */
+  sampler?: Sampler | null
+  /** How long a run may use almost no CPU before it is flagged, in ms. */
+  idleMs?: number
   /** How often the queue looks at the load and its runs, in ms. 0: only when asked (tests). */
   tickMs?: number
   /**
@@ -160,9 +171,16 @@ export class Queue {
   readonly #clock: () => number
   readonly #spawner: Spawner
   #timer: ReturnType<typeof setInterval> | null = null
+  /** What each running run's tree used at the last look, for idle slots. Memory only. */
+  readonly #watches = new Map<string, Watch>()
+  readonly #flagged = new Set<string>()
+  #sampled = 0
+  #sampling = false
+  readonly #sampler: Sampler | null
 
   constructor(readonly options: QueueOptions) {
     this.#clock = options.clock ?? Date.now
+    this.#sampler = options.sampler === undefined ? psSampler : options.sampler
     this.#spawner = options.spawner ?? shellSpawner
     ensureDirs(options.dir)
     this.#load()
@@ -345,6 +363,7 @@ export class Queue {
     return {
       ...rest,
       position: at < 0 ? null : at + 1,
+      idleSince: run.state === 'running' ? idleSince(this.#watches.get(run.id) ?? null, this.#clock(), this.options.idleMs) : null,
       waiting: run.state === 'queued' ? waitingSaid(run.id, waiting, this.#running(), this.options.load(), this.#clock(), this.options.capacity()) : null,
     }
   }
@@ -429,12 +448,57 @@ export class Queue {
         else this.#end(run, null, 'It stopped without an exit code.')
       }
     }
+    this.#lookAtIdle()
     for (;;) {
       const decision = decide(this.#waiting(), this.#running(), this.options.load(), this.#clock(), this.options.capacity())
       if (decision.start === null) break
       this.#start(this.#runs.get(decision.start)!, decision.overdue)
     }
     this.options.ticked?.()
+  }
+
+  /**
+   * Look at what the running runs' processes use, at most every `SAMPLE_EVERY_MS`, without waiting for
+   * the answer (a look is a `ps`). A run that was not flagged and now is, or the other way, is a change
+   * the page hears about. Never cancels anything.
+   */
+  #lookAtIdle(): void {
+    const sampler = this.#sampler
+    const now = this.#clock()
+    const running = this.#running().filter((run) => run.pid !== null)
+    for (const id of [...this.#watches.keys()]) {
+      if (running.some((run) => run.id === id)) continue
+      this.#watches.delete(id)
+      this.#flagged.delete(id)
+    }
+    if (!sampler || this.#sampling || !running.length || now - this.#sampled < SAMPLE_EVERY_MS) return
+    this.#sampled = now
+    this.#sampling = true
+    void sampler(running.map((run) => run.pid!)).then(
+      (seen) => {
+        this.#sampling = false
+        if (!seen) return
+        let changed = false
+        const at = this.#clock()
+        for (const run of this.#running()) {
+          const cpu = run.pid === null ? undefined : seen.get(run.pid)
+          if (!cpu) continue
+          const next = look(this.#watches.get(run.id) ?? null, cpu, at)
+          const flagged = idleSince(next, at, this.options.idleMs) !== null
+          if (flagged !== this.#flagged.has(run.id)) changed = true
+          if (flagged) this.#flagged.add(run.id)
+          else this.#flagged.delete(run.id)
+          this.#watches.set(run.id, next)
+        }
+        if (changed) {
+          for (const waiter of [...this.#waiters]) waiter()
+          this.options.changed?.()
+        }
+      },
+      () => {
+        this.#sampling = false
+      },
+    )
   }
 
   #start(run: Run, overdue: boolean): void {

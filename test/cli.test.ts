@@ -78,7 +78,7 @@ describe('through the queue', () => {
     })
     const url = `http://127.0.0.1:${server.port}`
     const env = { KEHIKOT_QUEUE_URL: url, KEHIKOT_QUEUE_DIR: queueDir, KEHIKOT_MODULES_DIR: scratch() }
-    const failed = await cli(['run', '--kind', 'push', '--label', 'pre-push', '--from', 'pre-push hook', '--', 'sh', '-c', 'echo one; sleep 1; echo two; exit 3'], env)
+    const failed = await cli(['run', '--kind', 'push', '--label', 'pre-push', '--from', 'pre-push hook', '--', 'sh', '-c', 'echo one; bun -e "await Bun.sleep(1000)"; echo two; exit 3'], env)
     expect(failed.code).toBe(3)
     expect(failed.out).toBe('one\ntwo\n')
     expect(failed.err).toContain('failed (exit 3)')

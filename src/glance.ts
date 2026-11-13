@@ -281,3 +281,24 @@ export function loadTip(point: Sample, machine: Pick<Machine, 'loadAbove'>): Tip
   return { value: `Load ${loadText(point.load)}`, detail: point.load > machine.loadAbove ? 'Holding new runs' : `Paused above ${loadText(machine.loadAbove)}`, note: clock(point.at) }
 }
 
+
+/* ---- the queue out of reach ---- */
+
+/** How long ago, in a few words: "just now", "5 min ago", "2 h 10 min ago", "3 days ago". */
+export function ageSaid(since: number, now: number): string {
+  const minutes = Math.max(0, Math.floor((now - since) / 60_000))
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes} min ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours} h${minutes % 60 ? ` ${minutes % 60} min` : ''} ago`
+  const days = Math.floor(hours / 24)
+  return `${days} day${days === 1 ? '' : 's'} ago`
+}
+
+/**
+ * What the page says when the Queue server does not answer (issue #47): never a zero, which reads as an
+ * idle queue. Runs asked through the command line may still be running and waiting.
+ */
+export function unreachableSaid(seenAt: number | null, now: number): string {
+  return `Can't reach the Queue server: numbers unavailable.${seenAt === null ? ' It has not been reached since this page opened.' : ` Last seen ${ageSaid(seenAt, now)}.`} Runs asked for in a terminal may still be running or waiting; \`kehikot-queue status\` lists them.`
+}

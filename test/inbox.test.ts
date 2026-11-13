@@ -17,6 +17,7 @@ export function aRun(over: Partial<RunView> = {}): RunView {
     origin: null,
     state: 'failed',
     why: null,
+    idleSince: null,
     pri: 0,
     rank: 1,
     queuedAt: 1000,
