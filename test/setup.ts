@@ -1,3 +1,6 @@
+/* The shared test preload (protocol 2.104.0): the running app's environment never reaches a test. */
+import 'kehikot-module-protocol/testing/setup'
+
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
