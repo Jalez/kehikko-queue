@@ -33,6 +33,13 @@ export function aRun(over: Partial<RunView> = {}): RunView {
 }
 
 describe('the Inbox', () => {
+  test('a lost run is a quiet done, said as lost, with why in its detail', () => {
+    const [item] = inboxItems([aRun({ state: 'lost', exit: null, why: 'Its process ended without reporting, so the queue let go of its slot.' })], 4000)
+    expect(item!.state).toBe('done')
+    expect(item!.label).toBe('Test run lost: pre-push monorepo in p')
+    expect(item!.detail).toContain('ended without reporting')
+  })
+
   test('nothing needs the person: a failure and a pass are done, a waiting or running run is working, all low', () => {
     const items = inboxItems([aRun(), aRun({ id: 'r2', state: 'passed', exit: 0 }), aRun({ id: 'r3', state: 'running', finishedAt: null, exit: null }), aRun({ id: 'r4', state: 'queued', startedAt: null, finishedAt: null, exit: null })], 4000)
     expect(items.map((one) => [one.id, one.state, one.label])).toEqual([

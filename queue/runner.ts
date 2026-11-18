@@ -21,6 +21,8 @@ const LOG_HEAD = 1024 * 1024
 
 export interface Started {
   pid: number
+  /** The pid leads its own process group (the real spawner): then the run is alive while that group is. Absent: only the pid is looked at. */
+  group?: boolean
   /** Resolves with the exit code (or 128+signal) when the run ends while this process holds it. */
   exited: Promise<number>
 }
@@ -50,7 +52,7 @@ export const shellSpawner: Spawner = {
         })
       })
       if (child.pid === undefined) throw new Error('the shell did not start')
-      return { pid: child.pid, exited }
+      return { pid: child.pid, group: true, exited }
     } finally {
       closeSync(fd)
     }
@@ -76,6 +78,21 @@ export function exitOf(file: string): number | null {
 export function alive(pid: number): boolean {
   try {
     process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return (error as { code?: string }).code === 'EPERM'
+  }
+}
+
+/**
+ * Whether a run's process group is still there. A run's shell leads its own session (`detached`), so
+ * its pid is its group's: the group is gone when the run is, and a pid some other process has taken
+ * since is not a group of that number (`kill(-pid)` finds no such group), so a run is not kept
+ * "running" by a stranger.
+ */
+export function running(pid: number): boolean {
+  try {
+    process.kill(-pid, 0)
     return true
   } catch (error) {
     return (error as { code?: string }).code === 'EPERM'
