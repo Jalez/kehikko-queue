@@ -25,7 +25,7 @@ describe('Vite and the built server serve the same paths', () => {
 
   test('it covers the doors, every /api path the page calls, the log and each skill', () => {
     const wire = read('src/app.tsx') + read('src/wire/api.ts')
-    const called = [...wire.matchAll(/'\.\/(api\/[a-z/]+)'|`\.\/(api\/[a-z/]+)\?/g)].map((one) => `/${one[1] ?? one[2]}`)
+    const called = [...wire.matchAll(/'\.?\/(api\/[a-z/]+)'|`\.?\/(api\/[a-z/]+)\?/g)].map((one) => `/${one[1] ?? one[2]}`)
     expect(called).toContain('/api/runs')
     expect(called).toContain('/api/log')
     for (const path of ['/healthz', '/mcp', '/api/runs', '/api/output', '/api/act', '/api/log', ...called]) expect(isOurs(path)).toBe(true)

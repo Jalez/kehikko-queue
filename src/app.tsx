@@ -605,7 +605,7 @@ export function OutputOf({ run, api }: { run: RunView; api: Api }) {
           {copied ? 'Copied' : 'Copy'}
         </Button>
         {truncated ? (
-          <a className="text-primary text-xs underline underline-offset-4" href={`./api/log?id=${encodeURIComponent(run.id)}`} target="_blank" rel="noreferrer">
+          <a className="text-primary text-xs underline underline-offset-4" href={`/api/log?id=${encodeURIComponent(run.id)}`} target="_blank" rel="noreferrer">
             Open full log
           </a>
         ) : null}
