@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { latestRuns } from 'kehikot-module-protocol'
 import { readRuns } from 'kehikot-module-protocol/serve'
 
-import { Queue, type Ask } from '../queue/queue.ts'
+import { ended, LOST_WHY, Queue, type Ask } from '../queue/queue.ts'
 import { runEnv } from '../queue/env.ts'
 import { projectOf, publish } from '../store.ts'
 import { inboxItems } from '../src/inbox.ts'
@@ -265,5 +265,62 @@ describe('results never ask for the person', () => {
     const run = queue({ dir }).get('old-red') as unknown as Record<string, unknown>
     expect(run.state).toBe('failed')
     for (const key of ['seenAt', 'seenBy', 'supersededBy', 'askerToldAt']) expect(key in run).toBe(false)
+  })
+})
+
+describe('a run whose process ended without reporting', () => {
+  test('is marked lost, says so in words, and frees its slot for the next run', async () => {
+    const dir = scratch()
+    const first = queue({ dir, most: 1 })
+    const run = first.enqueue(ask(['sh', '-c', 'sleep 60'], { project: '/p' }))
+    first.stop()
+    /* The queue came back and holds the run by its pid only; then the run's whole group is killed, so it writes no exit code. */
+    const second = queue({ dir, most: 1 })
+    const next = second.enqueue(ask(['sh', '-c', 'exit 0']))
+    expect(second.get(next.id)?.state).toBe('queued')
+    process.kill(-run.pid!, 'SIGKILL')
+    await Bun.sleep(200)
+    second.tick()
+    const lost = second.get(run.id)!
+    expect(lost.state).toBe('lost')
+    expect(lost.exit).toBeNull()
+    expect(lost.why).toBe(LOST_WHY)
+    expect(lost.why).toContain('ended without reporting')
+    expect(ended(lost.state)).toBe(true)
+    /* The slot is free: the waiting run started, and ran. */
+    expect((await second.wait(next.id, 10_000))?.state).toBe('passed')
+    /* The project is told it failed (the protocol has no `lost`), and the page says what it is. */
+    expect(second.resultsFor('/p').map((one) => one.state)).toEqual(['failed'])
+    expect(second.view(lost).state).toBe('lost')
+  })
+
+  test('a run still running is left alone, and one that wrote its exit code is its own result', async () => {
+    const dir = scratch()
+    const first = queue({ dir, most: 2 })
+    const alive = first.enqueue(ask(['sh', '-c', 'sleep 60']))
+    const done = first.enqueue(ask(['sh', '-c', 'exit 5']))
+    first.stop()
+    await Bun.sleep(300)
+    const second = queue({ dir, most: 2 })
+    second.tick()
+    expect(second.get(alive.id)?.state).toBe('running')
+    expect(second.get(done.id)?.state).toBe('failed')
+    expect(second.get(done.id)?.exit).toBe(5)
+    process.kill(-alive.pid!, 'SIGKILL')
+  })
+
+  test('a pid that another process has taken is not the run', async () => {
+    const dir = scratch()
+    const first = queue({ dir, most: 1 })
+    const run = first.enqueue(ask(['sh', '-c', 'sleep 60']))
+    first.stop()
+    process.kill(-run.pid!, 'SIGKILL')
+    /* This test process is a live pid that leads no group of that number: kept as the run's pid, it is alive, but it is not the run. */
+    const kept = JSON.parse(readFileSync(join(dir, 'runs.json'), 'utf8'))
+    kept.runs[0].pid = process.pid
+    writeFileSync(join(dir, 'runs.json'), JSON.stringify(kept))
+    const second = queue({ dir, most: 1 })
+    second.tick()
+    expect(second.get(run.id)?.state).toBe('lost')
   })
 })

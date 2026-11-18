@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, Check, ChevronsUp, CircleCheck, CircleDashed, CircleSlash, CircleX, Copy, LoaderCircle, SquareArrowOutUpRight, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, Check, ChevronsUp, CircleAlert, CircleCheck, CircleDashed, CircleSlash, CircleX, Copy, LoaderCircle, SquareArrowOutUpRight, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { navigationResult, settingsOpenResult, type HeaderItem, type PressValue } from 'kehikot-module-protocol'
@@ -340,11 +340,11 @@ function Group({ title, runs, compact = false, children }: { title: string; runs
   )
 }
 
-const STATE_WORDS: Record<RunView['state'], string> = { queued: 'Waiting', running: 'Running', passed: 'Passed', failed: 'Failed', cancelled: 'Cancelled' }
+const STATE_WORDS: Record<RunView['state'], string> = { queued: 'Waiting', running: 'Running', passed: 'Passed', failed: 'Failed', cancelled: 'Cancelled', lost: 'Lost' }
 
 function StateMark({ run, iconOnly = false }: { run: RunView; iconOnly?: boolean }) {
-  const Icon = run.state === 'passed' ? CircleCheck : run.state === 'failed' ? CircleX : run.state === 'cancelled' ? CircleSlash : run.state === 'running' ? LoaderCircle : CircleDashed
-  const tone = run.state === 'passed' ? 'text-emerald-600 dark:text-emerald-400' : run.state === 'failed' ? 'text-destructive' : 'text-muted-foreground'
+  const Icon = run.state === 'passed' ? CircleCheck : run.state === 'failed' ? CircleX : run.state === 'cancelled' ? CircleSlash : run.state === 'lost' ? CircleAlert : run.state === 'running' ? LoaderCircle : CircleDashed
+  const tone = run.state === 'passed' ? 'text-emerald-600 dark:text-emerald-400' : run.state === 'failed' || run.state === 'lost' ? 'text-destructive' : 'text-muted-foreground'
   return (
     <span className={`inline-flex shrink-0 items-center gap-1 text-xs font-medium ${tone}`} data-state={run.state}>
       <Icon className={`size-3.5 ${run.state === 'running' ? 'animate-spin' : ''}`} aria-hidden />

@@ -1,5 +1,6 @@
 import { answered, ask, subscribe } from 'kehikot-module-protocol/client'
 
+import { nothingHeld, take, viewOf, type Answer, type Held } from '../../queue/feed.ts'
 import type { RunView } from '../../queue/queue.ts'
 import type { LeaseView } from '../../queue/leases.ts'
 
@@ -67,23 +68,46 @@ export const overview = (got: Got): Overview => {
   return { runs: got.runs, leases: got.leases ?? [], machine: got.machine }
 }
 
+/**
+ * What this page holds of the queue. A read sends the token of what it holds and is answered with only
+ * what differs (`queue/feed.ts`); an answer that cannot be applied, or a server that does not send
+ * tokens (an older one), is read again whole. Nothing here is a second source of the queue: it is the
+ * last answer, kept so the next one can be small.
+ */
+let held: Held<RunView, Machine, LeaseView[]> = nothingHeld()
+
+/** One read or act, taken into what is held; the whole queue the page draws. */
+async function lookAt<T extends Got & Answer<RunView, Machine, LeaseView[]>>(call: (since: string) => Promise<T>): Promise<Overview> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const got = await call(attempt === 0 && held.token !== null ? String(held.token) : '')
+    if (typeof got.token !== 'number') {
+      /* An older server answers the whole queue with no token: draw it, and keep nothing. */
+      held = nothingHeld()
+      return overview(got)
+    }
+    /* Two reads in flight can come back out of order: an older answer never replaces a newer one. */
+    if (held.token !== null && got.token < held.token) return overview(viewOf(held))
+    const next = take(held, got)
+    if (next) {
+      held = next
+      return overview(viewOf(held))
+    }
+    held = nothingHeld()
+  }
+  throw new Error(NOT_THE_QUEUE)
+}
+
 export const api: Api = {
-  async runs() {
-    return overview(answered(await ask<Got>('./api/runs')))
-  },
+  runs: () => lookAt(async (since) => answered(await ask<Got & Answer<RunView, Machine, LeaseView[]>>('./api/runs', { query: { since } }))),
   async output(id, from) {
     const got = answered(await ask<{ text?: string; next?: number; size?: number }>('./api/output', { query: { id, from: String(from) } }))
     return { text: got.text ?? '', next: got.next ?? from, size: got.size ?? 0 }
   },
   changes: (onChange) => subscribe('./api/runs/events', () => onChange(), { probe: true }),
   outputChanges: (id, onChange) => subscribe('./api/output/events', () => onChange(), { query: { id }, probe: true }),
-  async cancel(id) {
-    return overview(answered(await ask<Got>('./api/act', { body: { op: 'cancel', id } })))
-  },
-  async release(id) {
-    return overview(answered(await ask<Got>('./api/act', { body: { op: 'release', id } })))
-  },
-  async move(id, to) {
-    return overview(answered(await ask<Got>('./api/act', { body: { op: 'move', id, to } })))
-  },
+  cancel: (id) => act({ op: 'cancel', id }),
+  release: (id) => act({ op: 'release', id }),
+  move: (id, to) => act({ op: 'move', id, to }),
 }
+
+const act = (body: Record<string, string>) => lookAt(async (since) => answered(await ask<Got & Answer<RunView, Machine, LeaseView[]>>('./api/act', { body, query: { since } })))

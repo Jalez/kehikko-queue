@@ -19,6 +19,7 @@ import { projectOf, publish } from './store.ts'
 import { argvOf, cwdOf, epicOf, expectOf, kindOf, labelOf, refsOf } from './queue/asks.ts'
 import { runEnv } from './queue/env.ts'
 import { originFromCwd, originFromPlace } from './queue/origin-find.ts'
+import { Feed } from './queue/feed.ts'
 import { loadMoved, makeStream, runsChanged, waitingMoved } from './live.ts'
 import { Strain } from './queue/strain.ts'
 import { logFile } from './queue/runner.ts'
@@ -146,7 +147,7 @@ export function span(ms: number): string {
  * and the tool call that reads its output (`queue_wait <id>`), so the notice stays one short line.
  */
 export function noticeFor(run: Pick<Run, 'id' | 'label' | 'state' | 'exit' | 'why' | 'expect' | 'startedAt' | 'finishedAt' | 'cwd'>): string {
-  const outcome = run.state === 'passed' ? 'passed' : run.state === 'failed' ? 'failed' : 'was cancelled'
+  const outcome = run.state === 'passed' ? 'passed' : run.state === 'failed' ? 'failed' : run.state === 'lost' ? 'was lost' : 'was cancelled'
   const exit = run.exit !== null ? ` (exit ${run.exit})` : ''
   const expected = run.expect === 'fail' ? (run.state === 'failed' ? ', as expected' : run.state === 'passed' ? ', but it was expected to fail' : '') : ''
   const ran = run.startedAt !== null && run.finishedAt !== null ? ` after ${span(run.finishedAt - run.startedAt)}` : ''
@@ -623,6 +624,20 @@ export function overview(q: Queue, leased: Leases = leases()) {
   }
 }
 
+/** What each page holds of the queue, so a read is only what differs from it (`queue/feed.ts`). */
+const FEED = new Feed<RunView, ReturnType<typeof overview>['machine'], ReturnType<typeof overview>['leases']>()
+
+/**
+ * The page's read: `since` is the token of the last answer it holds ('' for none), and the answer is
+ * only what differs from it. A caller without `since` (the CLI's own tools, older pages) gets the whole.
+ */
+export function overviewFor(q: Queue, query: URLSearchParams) {
+  if (!query.has('since')) return overview(q)
+  const now = overview(q)
+  const since = query.get('since')
+  return FEED.read({ runs: now.runs, machine: now.machine, leases: now.leases }, since && /^\d+$/.test(since) ? Number(since) : null)
+}
+
 export async function answer(
   method: string,
   path: string,
@@ -645,7 +660,7 @@ export async function answer(
     return mcp(body as Rpc, query, q)
   }
 
-  if (path === '/api/runs' && method === 'GET') return ok(overview(q))
+  if (path === '/api/runs' && method === 'GET') return ok(overviewFor(q, query))
 
   if (path === '/api/output' && method === 'GET') {
     const id = query.get('id') ?? ''
@@ -669,15 +684,15 @@ export async function answer(
     const id = typeof body?.id === 'string' ? body.id : ''
     if (body?.op === 'cancel') {
       const no = q.cancel(id, { person: true })
-      return no ? bad(no) : ok(overview(q))
+      return no ? bad(no) : ok(overviewFor(q, query))
     }
     if (body?.op === 'release') {
       const no = leases().release(id, { person: true })
-      return no ? bad(no) : ok(overview(q))
+      return no ? bad(no) : ok(overviewFor(q, query))
     }
     if (body?.op === 'move' && (body.to === 'up' || body.to === 'down' || body.to === 'top')) {
       const no = q.move(id, body.to as Move)
-      return no ? bad(no) : ok(overview(q))
+      return no ? bad(no) : ok(overviewFor(q, query))
     }
     return bad('An act is cancel (id), release (id of a dev-server lease) or move (id, to: up, down or top).')
   }

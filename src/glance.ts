@@ -128,11 +128,11 @@ export const RESULTS_SHOWN = 12
 /** The latest runs that ended, oldest first. */
 export function recentResults(runs: readonly RunView[], most = RESULTS_SHOWN): Result[] {
   return runs
-    .filter((run): run is RunView & { state: Ended } => run.state === 'passed' || run.state === 'failed' || run.state === 'cancelled')
+    .filter((run) => run.state === 'passed' || run.state === 'failed' || run.state === 'cancelled' || run.state === 'lost')
     .sort((a, b) => (b.finishedAt ?? 0) - (a.finishedAt ?? 0))
     .slice(0, most)
     .reverse()
-    .map((run) => ({ id: run.id, label: run.label, kind: run.kind, state: run.state, seconds: run.startedAt !== null && run.finishedAt !== null ? Math.max(0, Math.round((run.finishedAt - run.startedAt) / 1000)) : 0, at: run.finishedAt ?? 0 }))
+    .map((run) => ({ id: run.id, label: run.label, kind: run.kind, state: (run.state === 'lost' ? 'failed' : run.state) as Ended, seconds: run.startedAt !== null && run.finishedAt !== null ? Math.max(0, Math.round((run.finishedAt - run.startedAt) / 1000)) : 0, at: run.finishedAt ?? 0 }))
 }
 
 export function counts(results: readonly Result[]): Record<Ended, number> {
