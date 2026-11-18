@@ -4,7 +4,7 @@ import { join } from 'node:path'
 
 import { LIMITS, type RunResult } from 'kehikot-module-protocol'
 
-import { alive, capLog, exitFile, exitOf, LOG_MOST, logFile, readLog, shellSpawner, stopGroup, tailOf, type Spawner } from './runner.ts'
+import { alive, running, capLog, exitFile, exitOf, LOG_MOST, logFile, readLog, shellSpawner, stopGroup, tailOf, type Spawner } from './runner.ts'
 import { decide, moved, ordered, priorityOf, waitingSaid, type Capacity, type Move } from './schedule.ts'
 import { ensureDirs, exitDir, logsDir } from './machine.ts'
 import type { Origin } from './origin.ts'
@@ -26,7 +26,8 @@ import { psSampler } from './idle-ps.ts'
 export { whoAsked } from './who.ts'
 export { DEFAULT_KIND, isTests, KIND_WORDS, kindSaid, RUN_KINDS, type Kind } from './kinds.ts'
 import { publishedKind, type Kind } from './kinds.ts'
-export type State = 'queued' | 'running' | 'passed' | 'failed' | 'cancelled'
+/** `lost`: a running run whose process ended without reporting (no exit code, nothing left to wait for). */
+export type State = 'queued' | 'running' | 'passed' | 'failed' | 'cancelled' | 'lost'
 
 export const LABEL_MOST = LIMITS.RUN_LABEL
 export const ARGV_MOST = 256
@@ -101,6 +102,8 @@ export interface Run {
   finishedAt: number | null
   exit: number | null
   pid: number | null
+  /** The pid leads its own process group, so the run lives while the group does (a run kept before this has none: its pid alone is looked at). */
+  group?: boolean
   /** Whether it started past the load guard, having waited its longest. */
   overdue: boolean
   /** 'fail': the asker meant it to fail. Its result is said with "as expected" or "expected to fail". */
@@ -160,7 +163,13 @@ function owns(run: Run, by: By): boolean {
   return !!((by.key && by.key === run.key) || (by.token && run.asker.token && by.token === run.asker.token))
 }
 
-export const ended = (state: State) => state === 'passed' || state === 'failed' || state === 'cancelled'
+export const ended = (state: State) => state === 'passed' || state === 'failed' || state === 'cancelled' || state === 'lost'
+
+/** Whether a started run's process is still there: its whole group when it leads one, else its pid. */
+const stillRuns = (run: Run): boolean => (run.pid === null ? false : run.group ? running(run.pid) : alive(run.pid))
+
+/** Why a run is lost, in the person's words. */
+export const LOST_WHY = 'Its process ended without reporting, so the queue let go of its slot.'
 
 export class Queue {
   readonly #runs = new Map<string, Run>()
@@ -217,8 +226,8 @@ export class Queue {
       } else if (run.state === 'running') {
         const code = exitOf(exitFile(exitDir(this.options.dir), run.id))
         if (code !== null) this.#end(run, code, null, false, endedAt(exitFile(exitDir(this.options.dir), run.id)))
-        else if (run.pid === null || !alive(run.pid)) {
-          Object.assign(run, { state: 'failed', finishedAt: now, why: 'It stopped while the queue was away and left no exit code.' })
+        else if (run.pid === null || !stillRuns(run)) {
+          Object.assign(run, { state: 'lost', finishedAt: now, why: 'Its process ended without reporting while the queue was away.' })
           this.#told(run)
         }
         /* Else: still running in its own group; `tick` looks for its exit file. */
@@ -319,7 +328,7 @@ export class Queue {
     const run = this.#runs.get(id)
     if (!run) return 'There is no such run.'
     if (!owns(run, by)) return 'That run is not yours to cancel: only the session that asked for it, or the person on the Queue page, can cancel it.'
-    if (ended(run.state)) return `That run has already ${run.state === 'passed' ? 'passed' : run.state === 'failed' ? 'failed' : 'been cancelled'}.`
+    if (ended(run.state)) return `That run has already ${run.state === 'passed' ? 'passed' : run.state === 'failed' ? 'failed' : run.state === 'lost' ? 'been lost' : 'been cancelled'}.`
     if (run.state === 'running' && run.pid !== null) stopGroup(run.pid)
     Object.assign(run, { state: 'cancelled', finishedAt: this.#clock(), why: 'person' in by ? 'Cancelled by the person.' : 'Cancelled by the session that asked for it.' })
     this.#env.delete(id)
@@ -442,10 +451,11 @@ export class Queue {
       /* A run picked up after a restart has no process handle: its exit file says when it ends. */
       const code = exitOf(exitFile(exitDir(dir), run.id))
       if (code !== null) this.#end(run, code, null, true, endedAt(exitFile(exitDir(dir), run.id)))
-      else if (run.pid !== null && !alive(run.pid)) {
+      /* The run's whole process group, not just the shell's pid: a pid another process now has is not the run. */
+      else if (run.pid !== null && !stillRuns(run)) {
         const late = exitOf(exitFile(exitDir(dir), run.id))
         if (late !== null) this.#end(run, late, null)
-        else this.#end(run, null, 'It stopped without an exit code.')
+        else this.#lose(run)
       }
     }
     this.#lookAtIdle()
@@ -516,6 +526,7 @@ export class Queue {
       const started = this.#spawner.start({ argv: run.argv, cwd: run.cwd, env: { ...env, KEHIKOT_QUEUE_RUN: run.id }, log: logFile(logsDir(this.options.dir), run.id), exit: exitFile(exitDir(this.options.dir), run.id) })
       run.state = 'running'
       run.pid = started.pid
+      if (started.group) run.group = true
       this.#env.delete(run.id)
       this.#changed(run)
       void started.exited.then(
@@ -550,6 +561,18 @@ export class Queue {
     this.#told(run)
   }
 
+  /**
+   * A run whose process ended without reporting (killed whole, so no exit file; or a process the
+   * queue was never told the end of): it is not running, so it must not hold a slot. Marked `lost`,
+   * said in words, and the next waiting run starts at once.
+   */
+  #lose(run: Run): void {
+    Object.assign(run, { state: 'lost', exit: null, why: LOST_WHY, finishedAt: this.#clock() })
+    capLog(logFile(logsDir(this.options.dir), run.id))
+    this.#changed(run)
+    this.#told(run)
+  }
+
   /** Tell `ended` once about a run that ended. */
   #told(run: Run): void {
     try {
@@ -578,7 +601,7 @@ export class Queue {
         kind: publishedKind(run.kind),
         refs: run.refs,
         epic: run.epic,
-        state: run.state,
+        state: run.state === 'lost' ? 'failed' : run.state,
         queuedAt: run.queuedAt,
         startedAt: run.startedAt,
         finishedAt: run.finishedAt,

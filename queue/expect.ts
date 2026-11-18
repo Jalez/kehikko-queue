@@ -9,7 +9,7 @@
 export type Expect = 'fail'
 
 export interface Judged {
-  state: 'queued' | 'running' | 'passed' | 'failed' | 'cancelled'
+  state: 'queued' | 'running' | 'passed' | 'failed' | 'cancelled' | 'lost'
   /** 'fail': the asker meant it to fail (a red test first). Absent or null: meant to pass. */
   expect?: Expect | null
 }

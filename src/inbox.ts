@@ -66,6 +66,7 @@ export function inboxItems(runs: readonly RunView[], now: number): ActivityItem[
         : run.state === 'passed' && meantToFail ? `Tests passed but were expected to fail: ${run.label} ${where}`
         : run.state === 'passed' ? `Tests passed: ${run.label} ${where}`
         : run.state === 'cancelled' ? `Test run cancelled: ${run.label} ${where}`
+        : run.state === 'lost' ? `Test run lost: ${run.label} ${where}`
         : run.state === 'running' ? `Tests running: ${run.label} ${where}`
         : `Tests waiting: ${run.label} ${where}`
       : run.state === 'failed' && meantToFail ? `Failed as expected: ${run.label} ${where}${exit}`
@@ -73,6 +74,7 @@ export function inboxItems(runs: readonly RunView[], now: number): ActivityItem[
         : run.state === 'passed' && meantToFail ? `Passed but was expected to fail: ${run.label} ${where}`
         : run.state === 'passed' ? `Passed: ${run.label} ${where}`
         : run.state === 'cancelled' ? `Cancelled: ${run.label} ${where}`
+        : run.state === 'lost' ? `Lost: ${run.label} ${where}`
         : run.state === 'running' ? `Running: ${run.label} ${where}`
         : `Waiting: ${run.label} ${where}`
     const branch = originOf(run)?.branch
