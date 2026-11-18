@@ -207,6 +207,6 @@ describe('the output drawer', () => {
     await settle()
     fireEvent.click(outputButton('first'))
     await settle()
-    expect(screen.getByText('Open full log').getAttribute('href')).toBe('./api/log?id=f1')
+    expect(screen.getByText('Open full log').getAttribute('href')).toBe('/api/log?id=f1')
   })
 })
