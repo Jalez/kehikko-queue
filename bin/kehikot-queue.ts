@@ -160,6 +160,9 @@ export function patienceOf(env: Env = process.env): number {
   return env.KEHIKOT_QUEUE_PATIENCE !== undefined && env.KEHIKOT_QUEUE_PATIENCE !== '' && Number.isFinite(said) && said >= 0 ? Math.min(said, 600) * 1000 : 20_000
 }
 
+/** How many times a run cancelled by Queue restarting is asked for again before it runs here instead. */
+export const AGAIN_MOST = 3
+
 /** How often a Queue that is away is looked for again while it is waited for. */
 const LOOK_EVERY_MS = 1000
 
@@ -345,7 +348,7 @@ export function quietly(argv: string[]): Promise<number> {
   })
 }
 
-export async function queued(parsed: Parsed, env: Env = process.env, cwd = process.cwd()): Promise<number> {
+export async function queued(parsed: Parsed, env: Env = process.env, cwd = process.cwd(), again = 0): Promise<number> {
   if (parsed.guard) {
     const line = guardedLine(parsed.argv)
     if (line === null || escaped(line, env)) return quietly(parsed.argv)
@@ -446,7 +449,11 @@ export async function queued(parsed: Parsed, env: Env = process.env, cwd = proce
   }
   if (stopAsked) await cancel()
 
-  return follow(url, token, id, { expect: parsed.expect, instead: (why) => direct(parsed.argv, why), find: () => locate(env, 0, null) })
+  /* Cancelled because Queue restarted before it started (Kehikot updating): asked for again in the
+     Queue that came back, keeping its turn behind what runs there, instead of running here around it.
+     A few times at most; then it runs here, as before. */
+  const instead = (why: string) => (/restarted before/.test(why) && again < AGAIN_MOST ? (SAY(`Queue restarted before ${id} started; asking for it again.`), queued(parsed, env, cwd, again + 1)) : direct(parsed.argv, why))
+  return follow(url, token, id, { expect: parsed.expect, instead, find: () => locate(env, 0, null) })
 }
 
 /** The CLI as a shell runs it (the wrapper beside this file), quoted: its path has spaces on macOS. */

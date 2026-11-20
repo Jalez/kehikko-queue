@@ -195,8 +195,17 @@ This module runs commands, so its doors are strict. It never runs anything it wa
   Finished runs and their logs go after 7 days, or beyond the newest 300.
 
 A run that is **running** when Queue stops (an update restarts it) carries on in its own process
-group, and is picked up again at the next start with its exit code. A run still **waiting** then is
-ended as cancelled, because its environment was only in memory. The CLI then runs it directly.
+group, and is picked up again at the next start with its exit code. A run still **waiting** then
+keeps its place when an agent asked for it (`queue_run`: its environment is this module's own, made
+again); one a shell asked for is cancelled, because its environment was only in memory, and the CLI
+waiting on it asks for it again in the Queue that came back (at most three times; then it runs it
+directly).
+
+**An app restart can wait for the queue.** When Kehikot restarts to update, it asks Queue to hold
+the restart behind the runs ahead of it (protocol 2.110.0, `work.queue` `hold`). It shows here as a
+run of its own, "app restart": the runs ahead go first, nothing behind it starts (the restart would
+cut it off), and when nothing is running it tells Kehikot to go. Cancel it here and Kehikot does not
+restart. Nothing running or waiting: Kehikot restarts at once.
 
 ## Development
 

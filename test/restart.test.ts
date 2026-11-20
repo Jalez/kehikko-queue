@@ -25,8 +25,9 @@ const scratch = () => {
 }
 
 /** A stand-in Queue: answers its health, takes a run, and says it passed (with what ran) when followed. */
-function standInQueue(said: string, options: { endFollow?: boolean } = {}) {
+function standInQueue(said: string, options: { endFollow?: boolean; cancelFirst?: boolean } = {}) {
   const taken: unknown[] = []
+  let follows = 0
   const server = Bun.serve({
     hostname: '127.0.0.1',
     port: 0,
@@ -41,6 +42,12 @@ function standInQueue(said: string, options: { endFollow?: boolean } = {}) {
         if (options.endFollow === false) {
           /* Says it is queued, then the stream breaks: Queue went away mid-wait. */
           return new Response(`${JSON.stringify({ run: { id: 'r1', state: 'queued', waiting: 'first in line' } })}\n`)
+        }
+        follows += 1
+        /* Queue restarted before the run started (Kehikot updating): the first one is cancelled. */
+        if (options.cancelFirst && follows === 1) {
+          const end = { id: 'r1', state: 'cancelled', exit: null, why: 'The queue restarted before this run started. Ask for it again.', waiting: null, position: null }
+          return new Response(`${JSON.stringify({ end })}\n`)
         }
         const end = { id: 'r1', state: 'passed', exit: 0, why: null, waiting: null, position: null }
         return new Response(`${JSON.stringify({ out: `${said}\n`, next: 1 })}\n${JSON.stringify({ end })}\n`)
@@ -97,6 +104,18 @@ describe('where Queue is looked for', () => {
 })
 
 describe('Kehikot restarting while a session runs a command', () => {
+  test('a run Queue cancelled by restarting is asked for again in the Queue that came back, not run here around it (2.110.0)', async () => {
+    const { queueDir, modules, register } = machine()
+    const queue = standInQueue('ran in the queue', { cancelFirst: true })
+    register(queue.url)
+    const { out, err, code } = await spawnCli(['run', '--', 'sh', '-c', 'echo ran here'], { KEHIKOT_QUEUE_DIR: queueDir, KEHIKOT_MODULES_DIR: modules })
+    expect(err).toContain('asking for it again')
+    expect(queue.taken).toHaveLength(2)
+    expect(out).toContain('ran in the queue')
+    expect(out).not.toContain('ran here')
+    expect(code).toBe(0)
+  })
+
   test('a guard\'s rewrite waits for Queue to come back on a new port and is queued there, not run unguarded', async () => {
     const { queueDir, modules, register } = machine()
     /* Before the restart Queue was here; now nothing answers there. */

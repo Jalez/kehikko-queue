@@ -10,12 +10,17 @@
  * The protocol's run results know push, verify, review and other: a build or a task is published as other.
  */
 export const RUN_KINDS = ['verify', 'build', 'task', 'push', 'review', 'other', 'typecheck', 'e2e'] as const
-export type Kind = (typeof RUN_KINDS)[number]
+/**
+ * A run's kind: one anybody may ask for (`RUN_KINDS`), or `restart`, an app restart only the host's hold
+ * makes (protocol 2.110.0) and nobody can ask for through `queue_run` or the CLI.
+ */
+export type AskedKind = (typeof RUN_KINDS)[number]
+export type Kind = AskedKind | 'restart'
 /** A run asked for without a kind is tests, as every run was before the queue took other work. */
 export const DEFAULT_KIND: Kind = 'verify'
 
 /** A kind in a person's words, for a badge, a tooltip and a sentence. */
-export const KIND_WORDS: Record<Kind, string> = { verify: 'tests', build: 'build', task: 'task', push: 'push', review: 'review', other: 'task', typecheck: 'typecheck', e2e: 'e2e tests' }
+export const KIND_WORDS: Record<Kind, string> = { verify: 'tests', build: 'build', task: 'task', push: 'push', review: 'review', other: 'task', typecheck: 'typecheck', e2e: 'e2e tests', restart: 'app restart' }
 
 /** Other words a caller may use for a kind: unit tests are tests, Playwright is e2e. */
 export const KIND_ALIASES: Record<string, Kind> = { unit: 'verify', test: 'verify', tests: 'verify', playwright: 'e2e', tsc: 'typecheck' }

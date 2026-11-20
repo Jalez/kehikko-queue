@@ -98,6 +98,14 @@ export function queue(): Queue {
     ...toldOf(() => held, loadNow),
     tickMs: 5000,
     ended: (run, watched) => void tellAsker(run, watched),
+    /* An app restart the host asked to have held (protocol 2.110.0): its turn, or its cancel, told to the host. */
+    release: async (token, go) => {
+      const said = await askHost('restart.release', { token, go }, { module: ID })
+      if (!said.ok) return said.why
+      return said.data.outcome === 'unknown' ? (said.data.why || 'Kehikot holds no such restart any more.') : null
+    },
+    /* An agent's run is given this module's own environment (`agentEnv`), so it can be given it again after a restart. */
+    restoreEnv: (run) => (run.asker.via === 'mcp' ? agentEnv() : null),
   })
   return held
 }
