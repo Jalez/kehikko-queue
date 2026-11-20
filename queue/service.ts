@@ -1,7 +1,8 @@
 import { WORK_QUEUE, workQueueSchema, type WorkKind, type WorkQueue } from 'kehikot-module-protocol'
 
 import { shellQuoted } from './guards.ts'
-import type { Kind } from './kinds.ts'
+import type { AskedKind } from './kinds.ts'
+import { HOLD_PATH } from './hold-door.ts'
 import { WRAPPER } from './runner.ts'
 
 /**
@@ -12,7 +13,7 @@ import { WRAPPER } from './runner.ts'
  */
 
 /** Each kind of heavy work the protocol names, as the kind this queue runs it under. */
-export const WORK_KIND_AS: Record<WorkKind, Kind> = { test: 'verify', typecheck: 'typecheck', build: 'build', install: 'task' }
+export const WORK_KIND_AS: Record<WorkKind, AskedKind> = { test: 'verify', typecheck: 'typecheck', build: 'build', install: 'task' }
 
 /**
  * What this queue wants handed to it when a session starts it on its own (protocol 2.86.0, `wants`), so a
@@ -37,6 +38,8 @@ export function workQueueFor(cli: string): WorkQueue {
     /* A run's process sits under the runner's wrapper line; the CLI waits on one (and runs it itself when the queue is away). */
     marks: [WRAPPER, 'kehikot-queue'],
     wants: WANTS,
+    /* An app restart the host asks to have held behind the runs ahead of it (protocol 2.110.0). */
+    hold: HOLD_PATH,
   })
 }
 

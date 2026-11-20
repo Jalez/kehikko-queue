@@ -73,6 +73,8 @@ export interface Ask {
   origin?: Origin | null
   /** 'fail' when the asker means it to fail (a red test first); absent is meant to pass. */
   expect?: Expect | null
+  /** An app restart held for the host (kind `restart`, protocol 2.110.0): the host's token for it. */
+  hold?: string | null
 }
 
 /** Who may act on a run as its own: the person, or a caller with its key or the place token that asked. */
@@ -108,13 +110,15 @@ export interface Run {
   overdue: boolean
   /** 'fail': the asker meant it to fail. Its result is said with "as expected" or "expected to fail". */
   expect?: Expect | null
+  /** An app restart held for the host (protocol 2.110.0): the host's token, handed back when it goes. Never published, never shown. */
+  hold?: string | null
 }
 
 /** What 0.5.0 and 0.6.0 kept on a run for asking the person, which nothing reads any more: dropped as runs are read. */
 const RETIRED = ['seenAt', 'seenBy', 'supersededBy', 'askerToldAt'] as const
 
 /** A run as anyone may see it: no key, no environment. */
-export type RunView = Omit<Run, 'key'> & {
+export type RunView = Omit<Run, 'key' | 'hold'> & {
   position: number | null
   waiting: string | null
   /** Since when a running run has used almost no CPU (issue #48), or null. Only ever flagged, never acted on. */
@@ -139,6 +143,17 @@ export interface QueueOptions {
   idleMs?: number
   /** How often the queue looks at the load and its runs, in ms. 0: only when asked (tests). */
   tickMs?: number
+  /**
+   * Tell the host a restart it asked to have held may go (`go: true`), or was cancelled (protocol 2.110.0,
+   * `restart.release`). Answers null when the host took it, or why not.
+   */
+  release?(token: string, go: boolean): Promise<string | null>
+  /**
+   * The environment a waiting run gets back after this module restarted, when it can be made again (an
+   * agent's run gets this module's own, `agentEnv`); null when only its asker had it (a shell's run),
+   * which is then cancelled and asked for again by the CLI that waits on it.
+   */
+  restoreEnv?(run: Run): Record<string, string> | null
   /**
    * Told once when a run ends, however it ended, with whether anyone was waiting on it at that moment
    * (`watch`: a `queue_wait`, a CLI following it). Not told for a run its own asker cancelled.
@@ -220,7 +235,13 @@ export class Queue {
     }
     const now = this.#clock()
     for (const run of kept) {
-      if (run.state === 'queued') {
+      /* A held app restart needs no environment; an agent's run gets this module's own again. */
+      const env = run.state === 'queued' && run.kind !== 'restart' ? (this.options.restoreEnv?.(run) ?? null) : null
+      if (run.state === 'queued' && run.kind === 'restart') {
+        /* Still held: it goes when its turn comes, as before. */
+      } else if (run.state === 'queued' && env) {
+        this.#env.set(run.id, env)
+      } else if (run.state === 'queued') {
         Object.assign(run, { state: 'cancelled', finishedAt: now, why: 'The queue restarted before this run started. Ask for it again.' })
         this.#told(run)
       } else if (run.state === 'running') {
@@ -312,12 +333,32 @@ export class Queue {
       pid: null,
       overdue: false,
       expect: ask.expect ?? null,
+      ...(ask.hold ? { hold: ask.hold } : {}),
     }
     this.#runs.set(run.id, run)
     this.#env.set(run.id, ask.env)
     this.#changed(run)
     this.tick()
     return run
+  }
+
+  /**
+   * Hold an app restart behind the runs ahead of it (protocol 2.110.0): one at a time — a second hold
+   * takes over the one waiting, with its token and label. Not held when nothing runs or waits: the
+   * host restarts now. Answers how many runs are ahead of it.
+   */
+  hold(token: string, label: string, asker: Asker): { held: boolean; ahead: number } {
+    const waiting = this.#waiting()
+    const held = waiting.find((one) => one.kind === 'restart')
+    if (held) {
+      Object.assign(held, { hold: token, label })
+      this.#changed(held)
+      return { held: true, ahead: ordered(waiting).findIndex((one) => one.id === held.id) + this.#running().length }
+    }
+    const others = waiting.length + this.#running().length
+    if (others === 0) return { held: false, ahead: 0 }
+    this.enqueue({ argv: [], cwd: this.options.dir, env: {}, kind: 'restart', label, refs: [], epic: null, project: null, asker, hold: token })
+    return { held: true, ahead: others }
   }
 
   /**
@@ -330,6 +371,8 @@ export class Queue {
     if (!owns(run, by)) return 'That run is not yours to cancel: only the session that asked for it, or the person on the Queue page, can cancel it.'
     if (ended(run.state)) return `That run has already ${run.state === 'passed' ? 'passed' : run.state === 'failed' ? 'failed' : run.state === 'lost' ? 'been lost' : 'been cancelled'}.`
     if (run.state === 'running' && run.pid !== null) stopGroup(run.pid)
+    /* A held app restart cancelled here: the host is told, and does not restart. */
+    if (run.kind === 'restart' && run.hold) void this.options.release?.(run.hold, false).catch(() => null)
     Object.assign(run, { state: 'cancelled', finishedAt: this.#clock(), why: 'person' in by ? 'Cancelled by the person.' : 'Cancelled by the session that asked for it.' })
     this.#env.delete(id)
     this.#changed(run)
@@ -366,7 +409,7 @@ export class Queue {
   }
 
   view(run: Run): RunView {
-    const { key: _key, ...rest } = run
+    const { key: _key, hold: _hold, ...rest } = run
     const waiting = this.#waiting()
     const at = ordered(waiting).findIndex((one) => one.id === run.id)
     return {
@@ -516,6 +559,21 @@ export class Queue {
     const now = this.#clock()
     run.startedAt = now
     run.overdue = overdue
+    /* An app restart held behind the runs ahead of it: its turn is telling the host it may go. */
+    if (run.kind === 'restart') {
+      run.state = 'running'
+      this.#changed(run)
+      const release = this.options.release
+      const told = run.hold && release ? release(run.hold, true) : Promise.resolve('Nothing here can tell Kehikot to restart.')
+      void told
+        .catch((error: unknown) => (error instanceof Error ? error.message : String(error)))
+        .then((why) => {
+          if (run.state !== 'running') return
+          this.#end(run, why === null ? 0 : null, why === null ? 'Kehikot is restarting.' : `Kehikot did not restart: ${why}`)
+          this.tick()
+        })
+      return
+    }
     if (!env) {
       this.#end(run, null, 'Its environment was lost before it started.')
       return

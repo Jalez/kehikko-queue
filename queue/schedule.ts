@@ -42,7 +42,7 @@ export interface Running {
   kind: string
 }
 
-export const KIND_PRIORITY: Record<string, number> = { push: 0, verify: 1, build: 1, task: 1, review: 1, other: 1, typecheck: 1, e2e: 1 }
+export const KIND_PRIORITY: Record<string, number> = { push: 0, verify: 1, build: 1, task: 1, review: 1, other: 1, typecheck: 1, e2e: 1, restart: 1 }
 
 export const priorityOf = (kind: string): number => KIND_PRIORITY[kind] ?? 1
 
@@ -75,9 +75,21 @@ const asRuns = (running: number | readonly Running[]): readonly Running[] => (ty
 
 export type Decision = { start: string; overdue: boolean } | { start: null; why: string }
 
+/** The kind of an app restart held behind the runs ahead of it (protocol 2.110.0, `work.queue` `hold`). */
+export const RESTART_KIND = 'restart'
+
+/**
+ * An app restart waiting in the queue is a barrier (protocol 2.110.0): the runs ahead of it go as
+ * ever, nothing behind it starts (the restart would cut it off), and it goes itself once nothing is
+ * running and nothing is ahead of it, whatever the load (it runs nothing).
+ */
 export function decide(waiting: readonly Waiting[], running: number | readonly Running[], load: number, now: number, capacity: Capacity): Decision {
   const runs = asRuns(running)
   if (!waiting.length) return { start: null, why: 'Nothing is waiting.' }
+  const order = ordered(waiting)
+  const barrier = order.findIndex((one) => one.kind === RESTART_KIND)
+  if (barrier === 0) return runs.length === 0 ? { start: order[0]!.id, overdue: false } : { start: null, why: `The app restart waits for the ${runs.length === 1 ? 'run' : `${runs.length} runs`} running to finish.` }
+  if (barrier > 0) waiting = order.slice(0, barrier)
   if (runs.length >= capacity.most) return { start: null, why: `${runs.length} running, and ${capacity.most} at once is the most.` }
   const queue = ordered(waiting).filter((one) => !full(one, runs, capacity))
   if (!queue.length) return { start: null, why: 'Every waiting run\'s kind is running as many at once as it may.' }
@@ -98,6 +110,12 @@ export function waitingSaid(id: string, waiting: readonly Waiting[], running: nu
   if (at < 0) return ''
   const me = queue[at]!
   const ahead = at === 0 ? 'Next' : `${at + 1}${ordinal(at + 1)} in the queue`
+  const barrier = queue.findIndex((one) => one.kind === RESTART_KIND)
+  if (me.kind === RESTART_KIND) {
+    const before = at + runs.length
+    return before === 0 ? `${ahead}: restarts Kehikot now.` : `${ahead}: restarts Kehikot when the ${before === 1 ? 'run' : `${before} runs`} ahead of it ${before === 1 ? 'finishes' : 'finish'}.`
+  }
+  if (barrier >= 0 && at > barrier) return `${ahead}: waits behind the app restart, which would cut it off.`
   if (runs.length >= capacity.most) return `${ahead}: waiting for one of the ${runs.length} running to finish (${capacity.most} at once).`
   const room = kindRoom(me.kind, runs, capacity)
   if (room && room.now >= room.most) {
